@@ -1,0 +1,111 @@
+@import "tailwindcss";
+
+/* ---------- Brand helpers ---------- */
+:root { --brand: 37 99 235; } /* #2563eb */
+.bg-brand { background: rgb(var(--brand)); }
+.text-brand { color: rgb(var(--brand)); }
+.border-brand { border-color: rgb(var(--brand)); }
+.ring-brand { --tw-ring-color: rgb(var(--brand)); }
+.hover\:bg-brand:hover { background: rgb(var(--brand)); }
+.bg-brand\/90 { background: rgb(var(--brand) / 0.90); }
+.bg-brand\/80 { background: rgb(var(--brand) / 0.80); }
+.bg-brand\/5  { background: rgb(var(--brand) / 0.05); }
+
+/* ---------- Base ---------- */
+html, body { height: 100%; }
+body { @apply text-slate-800 bg-gradient-to-br from-slate-50 to-slate-100; }
+
+@layer utilities {
+  .shadow-soft { box-shadow: 0 10px 30px -10px rgba(0,0,0,.15); }
+}
+
+.only-print { display: none; }
+.no-print {}
+
+/* =========================================================
+   PRINT — tight top, no overflow, clean frame, perfect grid
+   ========================================================= */
+@media print {
+  /* Start near the very top. Ask users to disable browser headers/footers. */
+  @page { size: A4; margin: 6mm 6mm 10mm 6mm; }
+
+  html, body { background:#fff !important; margin:0 !important; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+  /* Only print-area shows */
+  body * { visibility: hidden !important; }
+  .print-area, .print-area * { visibility: visible !important; }
+
+  /* Reset wrapper so it can't add space or curves */
+  .print-area {
+    position: static !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+    overflow: hidden !important; /* no horizontal bleed */
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+  .print-area * { border-radius: 0 !important; box-shadow: none !important; }
+
+  /* safe way to remove most Tailwind spacing inside the sheet */
+  .print-area [class*="p-"],
+  .print-area [class*="px-"],
+  .print-area [class*="py-"],
+  .print-area [class*="m-"],
+  .print-area [class*="mx-"],
+  .print-area [class*="my-"] {
+    padding: 0 !important; margin: 0 !important;
+  }
+
+  /* headings: no extra gap above the table */
+  .print-header { margin: 0 0 3mm 0 !important; text-align:center; font-weight:700; font-size:13px; }
+  .print-footer { position: fixed; bottom: 6mm; right: 10mm; font-size: 12px; }
+
+  /* Never print interactive controls */
+  .print-area .no-print { display: none !important; }
+  .print-area input, .print-area select, .print-area textarea, .print-area button {
+    display: none !important;
+  }
+  input::placeholder { color: transparent !important; }
+  .sticky, .fixed { position: static !important; top:auto !important; }
+
+  /* TABLE — natural widths (no table-fixed), crisp outer frame via outline */
+  .print-area table {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    border-collapse: separate !important;  /* avoids right-edge artefacts */
+    border-spacing: 0 !important;
+    border: 0 !important;
+    outline: 1px solid #000 !important;    /* outer frame that never overhangs */
+    background: transparent !important;
+    table-layout: auto !important;         /* let browser size columns naturally */
+  }
+  .print-area col { width: auto !important; } /* ignore colgroup widths on print */
+  .print-area thead { position: static !important; }
+
+  /* inner grid only; outline is the frame */
+  .print-area th, .print-area td {
+    border: 0 !important;
+    border-right: 1px solid #000 !important;
+    border-bottom: 1px solid #000 !important;
+    padding: 6px 8px !important;
+    font-size: 10.5pt !important;
+    line-height: 1.25 !important;
+    background: transparent !important;
+    word-break: break-word !important;
+    overflow: hidden !important;
+    text-overflow: clip !important;
+  }
+  /* remove duplicate frame lines (outline handles edges) */
+  .print-area tr > :first-child { border-left: 0 !important; }
+  .print-area tr > :last-child  { border-right: 0 !important; }
+  .print-area thead tr:first-child > * { border-top: 0 !important; }
+  /* keep rows intact across pages */
+  .print-area tr { break-inside: avoid; page-break-inside: avoid; }
+
+  .only-print { display: block !important; }
+  .no-print  { display: none !important; }
+}
