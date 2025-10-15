@@ -12,8 +12,8 @@ export async function GET(req: NextRequest) {
   await dbConnect()
   const { searchParams } = new URL(req.url)
   const q = (searchParams.get('q') || '').trim()
-  const limitRaw = Number(searchParams.get('limit') || '300')
-  const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 300) : 300
+  const limitRaw = Number(searchParams.get('limit') || '10')
+  const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 50) : 10
 
   const filter: Record<string, unknown> = { type: 'party' }
   if (q) filter.name = { $regex: escapeRegex(q), $options: 'i' }
@@ -23,20 +23,6 @@ export async function GET(req: NextRequest) {
     .limit(limit)
     .lean<PartyRow[]>()
 
-  const data = docs.map((d) => ({ _id: String(d._id), name: d.name, code: d.code ?? '' }))
+  const data = docs.map((d) => ({ id: String(d._id), name: d.name, code: d.code ?? '' }))
   return NextResponse.json(data)
-}
-
-export async function POST(req: NextRequest) {
-  await dbConnect()
-  const body = (await req.json().catch(() => null)) as { name?: string; code?: string } | null
-  const name = body?.name?.trim()
-  const code = body?.code?.trim()
-  if (!name) return NextResponse.json({ error: 'name required' }, { status: 400 })
-
-  const created = await Account.create({ name, code, type: 'party' })
-  return NextResponse.json(
-    { _id: String(created._id), name: created.name, code: created.code ?? '' },
-    { status: 201 },
-  )
 }

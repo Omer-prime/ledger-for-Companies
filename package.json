@@ -10,10 +10,13 @@
   },
   "dependencies": {
     "dayjs": "^1.11.18",
+    "jspdf": "^3.0.3",
+    "jspdf-autotable": "^5.0.2",
     "mongoose": "^8.18.2",
     "next": "15.5.4",
     "react": "19.1.0",
-    "react-dom": "19.1.0"
+    "react-dom": "19.1.0",
+    "zod": "^4.1.12"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
