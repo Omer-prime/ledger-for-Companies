@@ -1,9 +1,5 @@
 'use client'
 
-/**
- * Reports v3 — cleaner UI, quick ranges, filter chips, sticky toolbars, responsive table, skeletons
- */
-
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import dayjs from 'dayjs'
 import PartyAutocomplete from '../../../components/PartyAutocomplete'
@@ -36,7 +32,12 @@ const QUICK_RANGES = [
     } },
   { key: '30d', label: 'Last 30d', get: () => ({ from: dayjs().subtract(30, 'day'), to: dayjs() }) },
   { key: '90d', label: 'Last 90d', get: () => ({ from: dayjs().subtract(90, 'day'), to: dayjs() }) },
-  { key: 'ytd', label: 'YTD', get: () => ({ from: dayjs().startOf('year'), to: dayjs() }) },
+  { key: '6mo', label: 'Last 6 mo', get: () => ({ from: dayjs().subtract(5, 'month').startOf('month'), to: dayjs().endOf('month') }) },
+  { key: 'ytd', label: 'This Year (YTD)', get: () => ({ from: dayjs().startOf('year'), to: dayjs() }) },
+  { key: 'last_year', label: 'Last Year', get: () => {
+      const s = dayjs().subtract(1, 'year').startOf('year')
+      return { from: s, to: s.endOf('year') }
+    } },
 ] as const
 
 export default function ReportsPage() {
@@ -46,6 +47,17 @@ export default function ReportsPage() {
   const [rows, setRows] = useState<Row[]>([])
   const [totals, setTotals] = useState<Totals>({ debit: 0, credit: 0 })
   const [loading, setLoading] = useState<boolean>(false)
+
+  // helper: computed total per row
+  function rowTotal(r: Row): number {
+    const metaVal =
+      r.meta && typeof r.meta === 'object'
+        ? (r.meta as Record<string, unknown>)['totalDue']
+        : undefined
+    const mt = Number(metaVal)
+    if (Number.isFinite(mt) && mt !== 0) return mt
+    return Number(r.debit || 0) + Number(r.credit || 0)
+  }
 
   // auth
   const [me, setMe] = useState<Me>(null)
@@ -120,7 +132,7 @@ export default function ReportsPage() {
   useEffect(() => { void search() }, [search])
 
   // monthly summary
-  const monthly: Monthly[] = useMemo(() => {
+  const monthly = useMemo(() => {
     const map = new Map<string, { debit: number; credit: number }>()
     for (const r of rows) {
       const key = dayjs(r.date).format('YYYY-MM')
@@ -132,7 +144,15 @@ export default function ReportsPage() {
     return [...map.entries()]
       .map(([key, v]) => ({ key, ...v, net: v.debit - v.credit }))
       .sort((a, b) => a.key.localeCompare(b.key))
-  }, [rows])
+  }, [rows]) as Monthly[]
+
+  // Σ totals for badge (use rowTotal for "Total")
+  const duePaidRem = useMemo(() => {
+    const due = rows.reduce((s, r) => s + rowTotal(r), 0)
+    const paid = Number(totals.credit || 0)
+    const rem = due - paid
+    return { due, paid, rem }
+  }, [rows, totals.credit])
 
   function onCellChange(id: string, key: keyof Row, val: unknown) {
     setDirty(prev => ({ ...prev, [id]: { ...prev[id], [key]: val as never } }))
@@ -200,12 +220,17 @@ export default function ReportsPage() {
       }
     }
     set.delete('categoryId')
+    set.delete('totalDue') // shown as dedicated "Total"
     return [...set].sort()
   }, [rows])
 
   function htmlEscape(v: unknown): string {
     const s = v == null ? '' : String(v)
-    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+    return s
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
   }
 
   function openPrintWindow(html: string) {
@@ -224,7 +249,10 @@ export default function ReportsPage() {
         * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, 'Helvetica Neue', Arial, 'Noto Sans', 'Liberation Sans', sans-serif; color:#111827; }
         h1 { font-size: 16px; margin: 0 0 6px 0; }
+        h2 { font-size: 13px; margin: 12px 0 6px; }
         .sub { font-size: 11px; color:#4b5563; margin-bottom: 8px; }
+        ul { margin: 4px 0 10px 16px; padding: 0; }
+        li { font-size: 11px; line-height: 1.35; }
         table { width: 100%; border-collapse: separate; border-spacing: 0; outline: 1px solid #000; table-layout: fixed; }
         th, td { border-right: 1px solid #000; border-bottom: 1px solid #000; padding: 6px 8px; font-size: 11px; line-height: 1.35; vertical-align: top; word-break: break-word; }
         thead th { background: #f3f4f6; font-weight: 700; }
@@ -236,11 +264,13 @@ export default function ReportsPage() {
     `
   }
 
+  // PDF export — Voucher omitted; "Total" uses rowTotal()
   function exportResultsPDF() {
     const headers = [
       { key: 'date', label: 'Date' },
-      { key: 'voucherNo', label: 'Voucher#' },
+      // { key: 'voucherNo', label: 'Voucher#' },
       { key: 'description', label: 'Description' },
+      { key: 'total', label: 'Total', numeric: true }, // computed
       { key: 'debit', label: 'Debit', numeric: true },
       { key: 'credit', label: 'Credit', numeric: true },
       ...metaKeys.map((k) => ({ key: `meta.${k}`, label: k })),
@@ -250,12 +280,18 @@ export default function ReportsPage() {
       const cells: string[] = []
       for (const h of headers) {
         let val: unknown = ''
-        if (h.key === 'date') val = dayjs(r.date).isValid() ? dayjs(r.date).format('DD/MM/YYYY') : r.date
-        else if (h.key === 'debit') val = Number(r.debit || 0).toLocaleString()
-        else if (h.key === 'credit') val = Number(r.credit || 0).toLocaleString()
-        else if (h.key.startsWith('meta.')) {
+        if (h.key === 'date') {
+          val = dayjs(r.date).isValid() ? dayjs(r.date).format('DD/MM/YYYY') : r.date
+        } else if (h.key === 'debit') {
+          val = Number(r.debit || 0).toLocaleString()
+        } else if (h.key === 'credit') {
+          val = Number(r.credit || 0).toLocaleString()
+        } else if (h.key === 'total') {
+          val = rowTotal(r).toLocaleString()
+        } else if (h.key.startsWith('meta.')) {
           const mk = h.key.slice(5)
-          val = r.meta && typeof r.meta === 'object' ? (r.meta as Record<string, unknown>)[mk] ?? '' : ''
+          const metaVal = r.meta && typeof r.meta === 'object' ? (r.meta as Record<string, unknown>)[mk] : undefined
+          val = metaVal ?? ''
         } else {
           val = (r as Record<string, unknown>)[h.key] ?? ''
         }
@@ -264,29 +300,43 @@ export default function ReportsPage() {
       return `<tr>${cells.join('')}</tr>`
     }).join('')
 
+    const totalIdx = headers.findIndex(h => h.key === 'total')
+    const creditIdx = headers.findIndex(h => h.key === 'credit')
+    const leadingSpan = Math.max(totalIdx, 0)
+    const trailingSpan = Math.max(headers.length - (creditIdx + 1), 0)
+
     const totalsRow = `
       <tr>
-        <td class="right" colspan="${Math.max(headers.length - 3, 1)}"><b>Totals</b></td>
+        <td class="right" ${leadingSpan ? `colspan="${leadingSpan}"` : ''}><b>Totals</b></td>
+        <td class="num"><b>${rows.reduce((s, r) => s + rowTotal(r), 0).toLocaleString()}</b></td>
         <td class="num"><b>${totals.debit.toLocaleString()}</b></td>
         <td class="num"><b>${totals.credit.toLocaleString()}</b></td>
-        ${headers.length > 5 ? `<td colspan="${headers.length - 5}"></td>` : ''}
+        ${trailingSpan ? `<td colspan="${trailingSpan}"></td>` : ''}
       </tr>
     `
 
     const sub = [
       party.name ? `Party: ${htmlEscape(party.name)}` : null,
-      categoryId ? `Category: ${htmlEscape(categoryId)}` : null,
       `Range: ${from} → ${to}`,
-      q ? `Contains: “${htmlEscape(q)}”` : null,
+      `Total: ${rows.reduce((s, r) => s + rowTotal(r), 0).toLocaleString()} · Paid: ${totals.credit.toLocaleString()} · Remaining: ${(rows.reduce((s, r) => s + rowTotal(r), 0) - totals.credit).toLocaleString()}`,
     ].filter(Boolean).join(' · ')
+
+    const descLines = rows
+      .filter((r) => (r.description || '').trim() !== '')
+      .map((r) => `<li>${dayjs(r.date).format('DD/MM/YYYY')} — ${htmlEscape(r.description!)}</li>`)
+      .join('')
 
     const html = `
       <!doctype html><html><head><meta charset="utf-8" />
-      <title>Report</title>
+      <title>Transactions Report</title>
       ${buildCommonStyles('landscape')}
       </head><body>
         <h1>Transactions Report</h1>
         <div class="sub">${sub}</div>
+
+        <h2>Descriptions</h2>
+        <ul>${descLines || '<li>No descriptions.</li>'}</ul>
+
         <table>
           <thead>
             <tr>
@@ -303,6 +353,7 @@ export default function ReportsPage() {
     openPrintWindow(html)
   }
 
+  // MONTHLY export (unchanged)
   function exportMonthlyPDF() {
     const rowsHtml = monthly.map((m) => `
       <tr>
@@ -313,17 +364,18 @@ export default function ReportsPage() {
       </tr>
     `).join('')
 
+    const sub = [
+      party.name ? `Party: ${htmlEscape(party.name)}` : null,
+      `Range: ${from} → ${to}`,
+    ].filter(Boolean).join(' · ')
+
     const html = `
       <!doctype html><html><head><meta charset="utf-8" />
       <title>Monthly Summary</title>
       ${buildCommonStyles('portrait')}
       </head><body>
         <h1>Monthly Summary</h1>
-        <div class="sub">
-          ${party.name ? `Party: ${htmlEscape(party.name)} · ` : ''}
-          ${categoryId ? `Category: ${htmlEscape(categoryId)} · ` : ''}
-          Range: ${from} → ${to}
-        </div>
+        <div class="sub">${sub}</div>
         <table>
           <thead>
             <tr>
@@ -342,7 +394,6 @@ export default function ReportsPage() {
     openPrintWindow(html)
   }
 
-  // quick range apply
   function applyRange(key: typeof QUICK_RANGES[number]['key']): void {
     const r = QUICK_RANGES.find((x) => x.key === key)
     if (!r) return
@@ -350,8 +401,6 @@ export default function ReportsPage() {
     setFrom(d.from.format('YYYY-MM-DD'))
     setTo(d.to.format('YYYY-MM-DD'))
   }
-
-  const hasFilters = Boolean(q || party.id || categoryId)
 
   return (
     <main className="space-y-5">
@@ -379,10 +428,26 @@ export default function ReportsPage() {
               </div>
             </div>
           </div>
+
+          {/* Σ badge row */}
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <div className="rounded-xl bg-white/10 p-3">
+              <div className="text-[11px] uppercase tracking-wide text-white/80">Σ Total</div>
+              <div className="text-base font-semibold">{fmtMoney(duePaidRem.due)}</div>
+            </div>
+            <div className="rounded-xl bg-white/10 p-3">
+              <div className="text-[11px] uppercase tracking-wide text-white/80">Σ Paid (Credit)</div>
+              <div className="text-base font-semibold">{fmtMoney(duePaidRem.paid)}</div>
+            </div>
+            <div className="rounded-xl bg-white/10 p-3">
+              <div className="text-[11px] uppercase tracking-wide text-white/80">Remaining</div>
+              <div className="text-base font-semibold">{fmtMoney(duePaidRem.rem)}</div>
+            </div>
+          </div>
         </div>
       </section>
 
-      {/* Filters Card (sticky tools) */}
+      {/* Filters Card */}
       <section className="no-print rounded-2xl bg-white p-6 shadow-soft">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-lg font-semibold">Filters & Tools</h2>
@@ -454,8 +519,7 @@ export default function ReportsPage() {
           </button>
         </div>
 
-        {/* Active filter chips */}
-        {hasFilters && (
+        {Boolean(q || party.id || categoryId) && (
           <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
             {party.name && (
               <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-3 py-1 text-blue-800">
@@ -492,9 +556,9 @@ export default function ReportsPage() {
                 onClick={exportResultsPDF}
                 className="rounded-xl border px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
                 disabled={loading || rows.length === 0}
-                title="Download filtered results as PDF"
+                title="Download filtered results as PDF (includes description list)"
               >
-                Export Results (PDF)
+                Export Results (PDF + Descriptions)
               </button>
               <button
                 onClick={exportMonthlyPDF}
@@ -502,58 +566,11 @@ export default function ReportsPage() {
                 disabled={loading || monthly.length === 0}
                 title="Download monthly summary as PDF"
               >
-                Export Monthly (PDF)
+                Export Monthly Summary (PDF)
               </button>
             </span>
           </div>
         )}
-      </section>
-
-      {/* Quick add a new transaction */}
-      <section className="no-print rounded-2xl bg-white p-6 shadow-soft">
-        <h3 className="mb-2 font-medium">Quick add</h3>
-        <div className="grid gap-2 md:grid-cols-6">
-          <input
-            type="date"
-            className="rounded-xl border px-3 py-2"
-            value={add.date}
-            onChange={(e) => setAdd((a) => ({ ...a, date: e.target.value }))}
-          />
-          <input
-            className="rounded-xl border px-3 py-2"
-            placeholder="Voucher#"
-            value={add.voucherNo || ''}
-            onChange={(e) => setAdd((a) => ({ ...a, voucherNo: e.target.value }))}
-          />
-          <input
-            className="rounded-xl border px-3 py-2 md:col-span-2"
-            placeholder="Description"
-            value={add.description}
-            onChange={(e) => setAdd((a) => ({ ...a, description: e.target.value }))}
-          />
-          <input
-            type="number"
-            className="rounded-xl border px-3 py-2 text-right"
-            placeholder="Debit"
-            value={add.debit ?? ''}
-            onChange={(e) => setAdd((a) => ({ ...a, debit: e.target.value === '' ? undefined : Number(e.target.value) }))}
-          />
-          <input
-            type="number"
-            className="rounded-xl border px-3 py-2 text-right"
-            placeholder="Credit"
-            value={add.credit ?? ''}
-            onChange={(e) => setAdd((a) => ({ ...a, credit: e.target.value === '' ? undefined : Number(e.target.value) }))}
-          />
-        </div>
-        <div className="mt-2">
-          <button
-            onClick={() => void addRow()}
-            className="rounded-xl bg-emerald-600 px-4 py-2 text-white shadow-soft hover:bg-emerald-700"
-          >
-            Add
-          </button>
-        </div>
       </section>
 
       {/* Monthly summary */}
@@ -609,7 +626,7 @@ export default function ReportsPage() {
         </div>
       </section>
 
-      {/* Results */}
+      {/* Results with computed Total */}
       <section className="no-print rounded-2xl bg-white p-6 shadow-soft">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="font-medium">Results</h3>
@@ -622,6 +639,7 @@ export default function ReportsPage() {
                 <th className="px-3 py-2 text-left">Date</th>
                 <th className="px-3 py-2 text-left">Voucher#</th>
                 <th className="px-3 py-2 text-left">Description</th>
+                <th className="px-3 py-2 text-right">Total</th>
                 <th className="px-3 py-2 text-right">Debit</th>
                 <th className="px-3 py-2 text-right">Credit</th>
                 {isAdmin && <th className="px-3 py-2 text-right">Actions</th>}
@@ -665,6 +683,9 @@ export default function ReportsPage() {
                     )}
                   </td>
                   <td className="px-3 py-2 text-right">
+                    {fmtMoney(rowTotal(r))}
+                  </td>
+                  <td className="px-3 py-2 text-right">
                     {edit ? (
                       <input
                         type="number"
@@ -705,7 +726,7 @@ export default function ReportsPage() {
                 <>
                   {Array.from({ length: 6 }).map((_, i) => (
                     <tr key={`skel-${i}`} className="animate-pulse border-b/50">
-                      {Array.from({ length: isAdmin ? 6 : 5 }).map((__, j) => (
+                      {Array.from({ length: isAdmin ? 7 : 6 }).map((__, j) => (
                         <td key={`cell-${i}-${j}`} className="px-3 py-3">
                           <span className="inline-block h-3 w-full max-w-[140px] rounded bg-slate-200" />
                         </td>
@@ -716,7 +737,7 @@ export default function ReportsPage() {
               )}
               {!loading && rows.length === 0 && (
                 <tr>
-                  <td colSpan={isAdmin ? 6 : 5} className="px-3 py-10 text-center text-slate-500">
+                  <td colSpan={isAdmin ? 7 : 6} className="px-3 py-10 text-center text-slate-500">
                     No results. Try adjusting filters above.
                   </td>
                 </tr>

@@ -14,6 +14,9 @@ const items = [
   { href: '/admin/banks', label: 'Add Banks' },
   { href: '/admin/products', label: 'Add Products' },
   { href: '/admin/product-categories', label: 'Add Product Categories' },
+  { href: '/admin/purchases', label: 'Purchases' },
+  { href: '/admin/sales', label: 'Sales' },
+  { href: '/admin/inventory', label: 'Inventory' },
 ]
 
 export default function Sidebar() {
