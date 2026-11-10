@@ -1,0 +1,81 @@
+{
+  "profile": {
+    "name": "M AZEEM FABRICS",
+    "logoUrl": "",
+    "address": "Textile district, Faisalabad, Pakistan (demo)",
+    "email": "office@example.test",
+    "phone": "+92 300 000 0000",
+    "alternatePhone": "+92 300 000 0001",
+    "taxInformation": "Demonstration only"
+  },
+  "localization": {
+    "currency": "PKR",
+    "timeZone": "Asia/Karachi",
+    "dateFormat": "DD/MM/YYYY"
+  },
+  "measurements": {
+    "lengthUnit": "m",
+    "countUnit": "suit",
+    "piecesPerSuit": 3,
+    "piecesPerBundle": 12
+  },
+  "grades": [
+    {
+      "code": "A",
+      "label": "Premium",
+      "enabled": true
+    },
+    {
+      "code": "B",
+      "label": "Standard",
+      "enabled": true
+    },
+    {
+      "code": "C",
+      "label": "Seconds",
+      "enabled": true
+    }
+  ],
+  "textile": {
+    "fabricType": "Cotton blend",
+    "color": "Undyed",
+    "cuttingLossPercent": 2,
+    "dyeingLossPercent": 3,
+    "packingConvention": "Label each thaan with its lot and grade."
+  },
+  "thaan": {
+    "suitsPerThaan": 4,
+    "metersPerSuit": 6
+  },
+  "invoice": {
+    "prefix": "MAF-",
+    "startingNumber": 1,
+    "digits": 6,
+    "header": "M AZEEM FABRICS",
+    "footer": "Thank you for your business.",
+    "paperSize": "A4",
+    "copies": 1,
+    "showLogo": true
+  },
+  "paymentMethods": [
+    {
+      "code": "CASH",
+      "label": "Cash",
+      "enabled": true
+    },
+    {
+      "code": "BANK",
+      "label": "Bank transfer",
+      "enabled": true
+    }
+  ],
+  "terminology": {
+    "product": "Fabric",
+    "customer": "Customer",
+    "supplier": "Supplier",
+    "bundle": "Thaan",
+    "sale": "Sale",
+    "purchase": "Purchase",
+    "inventory": "Fabric stock"
+  }
+}
