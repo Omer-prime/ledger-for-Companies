@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import mongoose from 'mongoose'
 import { hashPassword } from '../src/lib/password.ts'
@@ -90,6 +91,30 @@ test('Phase 0 HTTP and replica-set acceptance rehearsal', async () => {
     const memberCookie = cookieOf(await login(member, resetPassword))
     assert.ok(memberCookie)
     assert.equal((await request('users', { cookie: memberCookie })).status, 403)
+    const settingsPath = 'business-settings'
+    assert.equal((await request(settingsPath)).status, 401)
+    assert.equal((await request(settingsPath, { cookie: memberCookie })).status, 403)
+    const defaults = await (await request(settingsPath, { cookie })).json()
+    assert.equal(defaults.revision, 0)
+    assert.equal(defaults.settings.profile.name, 'Your business')
+    const demo = JSON.parse(await readFile(new URL('./fixtures/business-settings-demo.json', import.meta.url), 'utf8'))
+    const put = (revision, settings, options = {}) => request(settingsPath, {
+      method: 'PUT', cookie, body: { revision, settings }, ...options,
+    })
+    assert.equal((await put(0, demo, { cookie: memberCookie })).status, 403)
+    assert.equal((await put(0, demo, { requestOrigin: 'https://unrelated.example.test' })).status, 403)
+    assert.equal((await put(0, { ...demo, extra: true })).status, 400)
+    assert.equal((await put(0, demo)).status, 200)
+
+    const next = { ...demo, invoice: { ...demo.invoice, copies: 2 } }
+    const concurrent = await Promise.all([put(1, next), put(1, next, { cookie: delegated })])
+    assert.deepEqual(concurrent.map(response => response.status).sort(), [200, 409])
+    assert.deepEqual((await (await request(settingsPath + '?revision=1', { cookie })).json()).settings, demo)
+    assert.deepEqual((await (await request(settingsPath, { cookie })).json()).settings, next)
+    assert.equal((await request(settingsPath + '?revision=99', { cookie })).status, 404)
+    assert.equal(await db.collection('business_settings').countDocuments(), 2)
+    assert.deepEqual(await transactions.findOne({ _id: legacyRow._id }), legacyRow)
+
     assert.equal((await request('transactions/search', { cookie: memberCookie })).status, 200)
     assert.equal((await request('transactions', { method: 'POST', cookie: memberCookie, requestOrigin: 'https://unrelated.example.test', body: {} })).status, 403)
     assert.equal((await request('transactions', { method: 'POST', cookie: memberCookie, body: { accountId: String(legacyRow.account), date: '2025-01-02', debit: 4, description: 'Fixture printable row' } })).status, 201)
