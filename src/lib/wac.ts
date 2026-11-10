@@ -5,6 +5,7 @@ export interface Movement {
   date: Date
   qty: number
   rate?: number
+  direction?: string
 }
 
 export interface Summary { qty: number; value: number; avg: number }
@@ -16,10 +17,10 @@ export function computeSummary(movs: Movement[]): Summary {
 
   for (const m of ordered) {
     const avg = qty > 0 ? value / qty : 0
-    if (m.type === 'purchase') {
+    if (m.type === 'purchase' || (m.type === 'adjustment' && m.direction === 'increase')) {
       qty += m.qty
       value += (m.rate ?? 0) * m.qty
-    } else { // sale, waste, adjustment consume at avg cost
+    } else { // sale, waste, and legacy/downward adjustment consume at avg cost
       qty -= m.qty
       value -= avg * m.qty
     }

@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { dbConnect } from '@/lib/db'
 import { User } from '@/models/User'
 import { getSession } from '@/lib/auth'
-import { apiError, readBody, requirePermission, text } from '@/lib/api-security'
+import { apiError, readBody, requirePermission, text, safeApi } from '@/lib/api-security'
 import { hashPassword } from '@/lib/password'
 
 const member = z.strictObject({
@@ -12,15 +12,15 @@ const member = z.strictObject({
   role: z.enum(['admin', 'manager', 'accountant']),
 })
 
-export async function GET() {
+export const GET = safeApi(async function GET() {
   const denied = await requirePermission('members')
   if (denied) return denied
   await dbConnect()
   const list = await User.find().select('_id name email role createdAt updatedAt').sort({ createdAt: -1 }).lean()
   return Response.json(list)
-}
+})
 
-export async function POST(req: Request) {
+export const POST = safeApi(async function POST(req: Request) {
   const denied = await requirePermission('members', req)
   if (denied) return denied
   const body = await readBody(req, member)
@@ -42,4 +42,4 @@ export async function POST(req: Request) {
     }
     return apiError(500, 'Unable to create member')
   }
-}
+})

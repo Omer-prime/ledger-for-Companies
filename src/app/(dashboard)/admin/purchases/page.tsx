@@ -1,5 +1,7 @@
 'use client'
 
+import { inventoryPostHeaders, finishInventoryRequest } from '@/lib/inventory-request'
+
 import { useMemo, useState } from 'react'
 import dayjs from 'dayjs'
 import PartyAutocomplete, { type PartyOption } from '../../../components/PartyAutocomplete'
@@ -136,9 +138,10 @@ export default function PurchasesPage() {
 
     const r = await fetch('/api/inventory/purchases/bulk', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: inventoryPostHeaders('purchases', { rows: payload }),
       body: JSON.stringify({ rows: payload }),
-    })
+    }).catch(() => new Response(null, { status: 503 }))
+    if (r.ok) finishInventoryRequest('purchases')
     setSaving(false)
     setMsg(r.ok ? 'Saved ✔' : 'Save failed')
   }
@@ -177,11 +180,12 @@ export default function PurchasesPage() {
     }
     const res = await fetch('/api/inventory/opening/bulk', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: inventoryPostHeaders('opening', body),
       body: JSON.stringify(body),
-    })
+    }).catch(() => new Response(null, { status: 503 }))
     setOpening(o => ({ ...o, saving: false }))
     if (res.ok) {
+      finishInventoryRequest('opening')
       await ensureSummary(opening.product.id!, true)
       closeOpening()
       setMsg('Opening stock set ✔')

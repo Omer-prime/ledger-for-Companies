@@ -1,4 +1,5 @@
-import { apiError, escapeRegex, requirePermission, validateQuery } from '@/lib/api-security'
+import { businessDateRange } from '@/lib/business-dates'
+import { apiError, escapeRegex, requirePermission, validateQuery, safeApi } from '@/lib/api-security'
 import { NextResponse } from 'next/server'
 import mongoose from 'mongoose'
 import { dbConnect } from '@/lib/db'
@@ -32,7 +33,7 @@ type RowOut = {
   meta: Record<string, unknown>
 }
 
-export async function GET(req: Request) {
+export const GET = safeApi(async function GET(req: Request) {
   const denied = await requirePermission('read')
   if (denied) return denied
   if (!validateQuery(req)) return apiError(400, 'Invalid query')
@@ -60,15 +61,9 @@ export async function GET(req: Request) {
     })
   }
 
-  if (from || to) {
-    const dateCond: Record<string, unknown> = {}
-    if (from) dateCond.$gte = new Date(from)
-    if (to) {
-      const end = new Date(to)
-      end.setUTCDate(end.getUTCDate() + 1)
-      dateCond.$lt = end
-    }
-    and.push({ date: dateCond })
+  const { start, end } = businessDateRange(from, to)
+  if (start || end) {
+    and.push({ date: { ...(start ? { $gte: start } : {}), ...(end ? { $lt: end } : {}) } })
   }
 
   // Party filter — support both `accountId` and `account` field names
@@ -90,10 +85,14 @@ export async function GET(req: Request) {
 
   const match = and.length ? { $and: and } : {}
 
+  const page = Number(searchParams.get('page') ?? '1')
+  if (!Number.isSafeInteger(page) || page < 1 || page > 10000) return apiError(400, 'Invalid page')
+
   // Always select meta so meta.totalDue is available
   const docs = await Transaction.find(match)
     .select({ date: 1, voucherNo: 1, description: 1, debit: 1, credit: 1, meta: 1 })
     .sort({ date: 1, _id: 1 })
+    .skip((page - 1) * limit)
     .limit(limit)
     .lean<TxLean[]>()
 
@@ -108,14 +107,11 @@ export async function GET(req: Request) {
     meta: d.meta && typeof d.meta === 'object' ? d.meta : {},
   }))
 
-  const totals = rows.reduce(
-    (acc, r) => {
-      acc.debit += Number(r.debit || 0)
-      acc.credit += Number(r.credit || 0)
-      return acc
-    },
-    { debit: 0, credit: 0 }
-  )
+  const [totals] = await Transaction.aggregate<{ debit: number; credit: number; count: number }>([
+    { $match: match },
+    { $group: { _id: null, debit: { $sum: '$debit' }, credit: { $sum: '$credit' }, count: { $sum: 1 } } },
+    { $project: { _id: 0, debit: 1, credit: 1, count: 1 } },
+  ])
 
-  return NextResponse.json({ rows, totals })
-}
+  return NextResponse.json({ rows, page, totalRows: totals?.count ?? 0, totals: { debit: totals?.debit ?? 0, credit: totals?.credit ?? 0 } })
+})

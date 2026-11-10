@@ -1,4 +1,4 @@
-import { requirePermission } from '@/lib/api-security'
+import { requirePermission, safeApi } from '@/lib/api-security'
 import { NextResponse } from 'next/server'
 import { dbConnect } from '@/lib/db'
 import InventoryMovement from '@/models/InventoryMovement'
@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic'
 
 type NameDoc = { _id: unknown; name: string }
 
-export async function GET() {
+export const GET = safeApi(async function GET() {
   const denied = await requirePermission('read')
   if (denied) return denied
   await dbConnect()
@@ -31,8 +31,8 @@ export async function GET() {
   for (const id of ids) {
     const movs = await InventoryMovement
       .find({ productId: id })
-      .select({ type: 1, date: 1, qty: 1, rate: 1 })
-      .sort({ date: 1, createdAt: 1 })
+      .select({ type: 1, date: 1, qty: 1, rate: 1, direction: 1 })
+      .sort({ date: 1, createdAt: 1, _id: 1 })
       .lean()
 
     if (movs.length === 0) continue
@@ -43,6 +43,7 @@ export async function GET() {
         type: (m.type === 'opening' ? 'purchase' : m.type) as 'purchase' | 'sale' | 'waste' | 'adjustment',
         date: new Date(m.date),
         qty: Number(m.qty || 0),
+        direction: m.direction,
         rate: typeof m.rate === 'number' ? m.rate : undefined,
       }))
     )
@@ -57,4 +58,4 @@ export async function GET() {
 
   lines.sort((a, b) => a.productName.localeCompare(b.productName))
   return NextResponse.json(lines)
-}
+})

@@ -1,4 +1,4 @@
-import { apiError, id, requirePermission } from '@/lib/api-security'
+import { apiError, id, requirePermission, safeApi } from '@/lib/api-security'
 
 async function immutable(req: Request, context: { params: Promise<{ id: string }> }) {
   const denied = await requirePermission('configure', req)
@@ -7,10 +7,10 @@ async function immutable(req: Request, context: { params: Promise<{ id: string }
   return apiError(409, 'Posted transactions are immutable')
 }
 
-export async function PATCH(req: Request, context: { params: Promise<{ id: string }> }) {
+export const PATCH = safeApi(async function PATCH(req: Request, context: { params: Promise<{ id: string }> }) {
   return immutable(req, context)
-}
+})
 
-export async function DELETE(req: Request, context: { params: Promise<{ id: string }> }) {
+export const DELETE = safeApi(async function DELETE(req: Request, context: { params: Promise<{ id: string }> }) {
   return immutable(req, context)
-}
+})

@@ -1,4 +1,4 @@
-import { apiError, requirePermission, validateQuery } from '@/lib/api-security'
+import { apiError, requirePermission, validateQuery, safeApi } from '@/lib/api-security'
 import { NextRequest, NextResponse } from 'next/server'
 import { dbConnect } from '@/lib/db'
 import { Account } from '@/models/Account'
@@ -15,7 +15,7 @@ type BankLean = {
   code?: string
 }
 
-export async function GET(req: NextRequest) {
+export const GET = safeApi(async function GET(req: NextRequest) {
   const denied = await requirePermission('read')
   if (denied) return denied
   if (!validateQuery(req)) return apiError(400, 'Invalid query')
@@ -41,4 +41,4 @@ export async function GET(req: NextRequest) {
   }))
 
   return NextResponse.json(data)
-}
+})

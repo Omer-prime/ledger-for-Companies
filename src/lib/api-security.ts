@@ -74,3 +74,14 @@ export function validateQuery(req: Request) {
   const to = params.get('to')
   return !from || !to || from <= to
 }
+
+// Keep driver errors and confidential request values out of framework error logs.
+export function safeApi<Args extends unknown[]>(handler: (...args: Args) => Promise<Response>) {
+  return async (...args: Args): Promise<Response> => {
+    try {
+      return await handler(...args)
+    } catch {
+      return apiError(503, 'Service unavailable')
+    }
+  }
+}

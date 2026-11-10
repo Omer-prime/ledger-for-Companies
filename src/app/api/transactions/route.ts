@@ -1,4 +1,5 @@
-import { amount, apiError, dateOnly, id, readBody, requirePermission, text, validateQuery } from '@/lib/api-security'
+import { businessDateRange } from '@/lib/business-dates'
+import { amount, apiError, dateOnly, id, readBody, requirePermission, text, validateQuery, safeApi } from '@/lib/api-security'
 import { z } from 'zod'
 import { NextResponse } from 'next/server'
 import { dbConnect } from '@/lib/db'
@@ -13,7 +14,7 @@ type Period = 'day' | 'month'
 type TxPre  = Pick<ITransaction, 'date' | 'debit' | 'credit'>
 type TxLite = Pick<ITransaction, 'date' | 'debit' | 'credit' | 'description' | 'voucherNo' | 'meta'>
 
-export async function GET(req: Request) {
+export const GET = safeApi(async function GET(req: Request) {
   const denied = await requirePermission('read')
   if (denied) return denied
   if (!validateQuery(req)) return apiError(400, 'Invalid query')
@@ -33,9 +34,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ opening: 0, rows: [], totals: { period, items: [] } })
   }
 
-  const fromDate = from ? new Date(from) : null
-  const toDate = to ? new Date(to) : null
-  if (toDate) toDate.setUTCDate(toDate.getUTCDate() + 1)
+  const { start: fromDate, end: toDate } = businessDateRange(from, to)
 
   // Opening = signed openingBalance + all tx before "from"
   const signedOpening = Number(acc.openingBalance || 0) * (acc.openingIsDebit ? 1 : -1)
@@ -68,11 +67,12 @@ export async function GET(req: Request) {
   const running: LedgerRow[] = computeRunning(rows, opening)
   const totals = groupTotals(running, period)
 
-  return NextResponse.json({ opening, rows: running, totals })
-}
+  const closing = rows.reduce((balance, row) => balance + Number(row.debit ?? 0) - Number(row.credit ?? 0), opening)
+  return NextResponse.json({ opening, closing, rows: running, totals })
+})
 
 // keep your POST as-is (creating a single transaction)
-export async function POST(req: Request) {
+export const POST = safeApi(async function POST(req: Request) {
   const denied = await requirePermission('post', req)
   if (denied) return denied
   await dbConnect()
@@ -86,7 +86,7 @@ export async function POST(req: Request) {
 
   let acc =
     accountId && mongoose.Types.ObjectId.isValid(accountId)
-      ? await Account.findById(accountId)
+      ? await Account.findOne({ _id: accountId, archivedAt: null })
       : null
 
   if (accountId && !acc) return apiError(400, 'Unknown account')
@@ -107,4 +107,4 @@ export async function POST(req: Request) {
   })
 
   return NextResponse.json(doc, { status: 201 })
-}
+})

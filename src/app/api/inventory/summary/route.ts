@@ -1,4 +1,4 @@
-import { apiError, requirePermission, validateQuery } from '@/lib/api-security'
+import { apiError, requirePermission, validateQuery, safeApi } from '@/lib/api-security'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { dbConnect } from '@/lib/db'
@@ -11,7 +11,7 @@ const Query = z.object({
 
 export const dynamic = 'force-dynamic'
 
-export async function GET(req: Request) {
+export const GET = safeApi(async function GET(req: Request) {
   const denied = await requirePermission('read')
   if (denied) return denied
   if (!validateQuery(req)) return apiError(400, 'Invalid query')
@@ -23,7 +23,8 @@ export async function GET(req: Request) {
   }
 
   const movs = await InventoryMovement.find({ productId: parsed.data.productId })
-    .select({ type: 1, date: 1, qty: 1, rate: 1 })
+    .select({ type: 1, date: 1, qty: 1, rate: 1, direction: 1 })
+    .sort({ date: 1, createdAt: 1, _id: 1 })
     .lean()
 
   // Map 'opening' to 'purchase' for WAC calculation (same effect: add stock/value)
@@ -32,6 +33,7 @@ export async function GET(req: Request) {
       const base = {
         date: new Date(m.date),
         qty: Number(m.qty || 0),
+        direction: m.direction,
         rate: typeof m.rate === 'number' ? m.rate : undefined,
       }
       const type =
@@ -44,4 +46,4 @@ export async function GET(req: Request) {
     { qty: summary.qty, value: summary.value, avg: summary.avg },
     { status: 200 },
   )
-}
+})

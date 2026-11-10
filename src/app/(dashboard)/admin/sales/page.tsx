@@ -1,5 +1,7 @@
 'use client'
 
+import { inventoryPostHeaders, finishInventoryRequest } from '@/lib/inventory-request'
+
 import { useEffect, useMemo, useState } from 'react'
 import dayjs from 'dayjs'
 import PartyAutocomplete from '../../../components/PartyAutocomplete'
@@ -80,9 +82,10 @@ export default function SalesPage() {
       }))
     const r = await fetch('/api/inventory/sales/bulk', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: inventoryPostHeaders('sales', { rows: payload }),
       body: JSON.stringify({ rows: payload }),
-    })
+    }).catch(() => new Response(null, { status: 503 }))
+    if (r.ok) finishInventoryRequest('sales')
     setSaving(false)
     setMsg(r.ok ? 'Saved ✔' : 'Save failed')
   }

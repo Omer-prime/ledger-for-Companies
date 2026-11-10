@@ -10,11 +10,13 @@ export interface IAccount {
   openingBalance?: number
   openingIsDebit?: boolean
   meta?: Record<string, unknown>
+  archivedAt?: Date
   createdAt: Date
   updatedAt: Date
 }
 
 const AccountSchema = new Schema<IAccount>({
+  archivedAt: Date,
   name: { type: String, required: true, trim: true },
   code: { type: String, unique: false, sparse: true },
   type: { type: String, required: true },

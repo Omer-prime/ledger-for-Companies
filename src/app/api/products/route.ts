@@ -1,4 +1,4 @@
-import { amount, apiError, escapeRegex, readBody, requirePermission, text, validateQuery } from '@/lib/api-security'
+import { amount, apiError, escapeRegex, readBody, requirePermission, text, validateQuery, safeApi } from '@/lib/api-security'
 import { z } from 'zod'
 import { NextResponse } from 'next/server'
 import { dbConnect } from '@/lib/db'
@@ -11,7 +11,7 @@ type ProductDoc = {
   meta?: Record<string, unknown>
 }
 
-export async function GET(req: Request) {
+export const GET = safeApi(async function GET(req: Request) {
   const denied = await requirePermission('read')
   if (denied) return denied
   if (!validateQuery(req)) return apiError(400, 'Invalid query')
@@ -21,7 +21,7 @@ export async function GET(req: Request) {
   const limitParam = Number(searchParams.get('limit') ?? '300')
   const limit = Number.isFinite(limitParam) ? Math.min(Math.max(1, limitParam), 300) : 300
 
-  const match: Record<string, unknown> = { type: 'product' }
+  const match: Record<string, unknown> = { type: 'product', archivedAt: null }
   if (q) match.name = { $regex: escapeRegex(q), $options: 'i' }
 
   // Cast through unknown to avoid 'any'
@@ -44,9 +44,9 @@ export async function GET(req: Request) {
   })
 
   return NextResponse.json(list)
-}
+})
 
-export async function POST(req: Request) {
+export const POST = safeApi(async function POST(req: Request) {
   const denied = await requirePermission('configure', req)
   if (denied) return denied
   await dbConnect()
@@ -82,4 +82,4 @@ export async function POST(req: Request) {
     },
     { status: 201 },
   )
-}
+})

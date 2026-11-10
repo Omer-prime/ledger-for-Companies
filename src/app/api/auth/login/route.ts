@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { AUTH_COOKIE, SESSION_SECONDS, cookieOptions, createSession, digest, revokeSession } from '@/lib/auth'
-import { apiError, readBody, sameOrigin } from '@/lib/api-security'
+import { apiError, readBody, sameOrigin, safeApi } from '@/lib/api-security'
 import { ROLES } from '@/lib/roles'
 import { verifyPassword } from '@/lib/password'
 import { dbConnect } from '@/lib/db'
@@ -12,7 +12,7 @@ const credentials = z.strictObject({
   password: z.string().min(1).max(256),
 })
 
-export async function POST(req: Request) {
+export const POST = safeApi(async function POST(req: Request) {
   if (!sameOrigin(req)) return apiError(403, 'Invalid request origin')
   const body = await readBody(req, credentials)
   if (!body) return apiError(400, 'Invalid credentials payload')
@@ -42,4 +42,4 @@ export async function POST(req: Request) {
   const res = NextResponse.json({ ok: true, role: user.role })
   res.cookies.set(AUTH_COOKIE, token, { ...cookieOptions, maxAge: SESSION_SECONDS })
   return res
-}
+})

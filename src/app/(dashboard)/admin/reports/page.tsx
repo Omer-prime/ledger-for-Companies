@@ -43,6 +43,7 @@ export default function ReportsPage() {
   const [from, setFrom] = useState<string>(dayjs().startOf('month').format('YYYY-MM-DD'))
   const [to, setTo] = useState<string>(dayjs().endOf('month').format('YYYY-MM-DD'))
   const [rows, setRows] = useState<Row[]>([])
+  const [totalRows, setTotalRows] = useState(0)
   const [totals, setTotals] = useState<Totals>({ debit: 0, credit: 0 })
   const [loading, setLoading] = useState<boolean>(false)
 
@@ -94,9 +95,11 @@ export default function ReportsPage() {
       ...(categoryId ? { categoryId } : {}),
     })
     const res = await fetch(`/api/transactions/search?${qp.toString()}`)
-    const json: { rows: Row[]; totals: Totals } = await res.json()
+    if (!res.ok) { setLoading(false); return }
+    const json: { rows: Row[]; totals: Totals; totalRows: number } = await res.json()
     setRows(json.rows)
     setTotals(json.totals)
+    setTotalRows(json.totalRows)
     setLoading(false)
   }, [q, from, to, party.id, categoryId])
 
@@ -117,13 +120,18 @@ export default function ReportsPage() {
       .sort((a, b) => a.key.localeCompare(b.key))
   }, [rows]) as Monthly[]
 
+  const pageTotals = useMemo(() => rows.reduce(
+    (sum, row) => ({ debit: sum.debit + Number(row.debit || 0), credit: sum.credit + Number(row.credit || 0) }),
+    { debit: 0, credit: 0 },
+  ), [rows])
+
   // Σ totals for badge (use rowTotal for "Total")
   const duePaidRem = useMemo(() => {
     const due = rows.reduce((s, r) => s + rowTotal(r), 0)
-    const paid = Number(totals.credit || 0)
+    const paid = pageTotals.credit
     const rem = due - paid
     return { due, paid, rem }
-  }, [rows, totals.credit])
+  }, [rows, pageTotals.credit])
 
   async function addRow() {
     const body = {
@@ -247,16 +255,16 @@ export default function ReportsPage() {
       <tr>
         <td class="right" ${leadingSpan ? `colspan="${leadingSpan}"` : ''}><b>Totals</b></td>
         <td class="num"><b>${rows.reduce((s, r) => s + rowTotal(r), 0).toLocaleString()}</b></td>
-        <td class="num"><b>${totals.debit.toLocaleString()}</b></td>
-        <td class="num"><b>${totals.credit.toLocaleString()}</b></td>
+        <td class="num"><b>${pageTotals.debit.toLocaleString()}</b></td>
+        <td class="num"><b>${pageTotals.credit.toLocaleString()}</b></td>
         ${trailingSpan ? `<td colspan="${trailingSpan}"></td>` : ''}
       </tr>
     `
 
     const sub = [
       party.name ? `Party: ${htmlEscape(party.name)}` : null,
-      `Range: ${from} → ${to}`,
-      `Total: ${rows.reduce((s, r) => s + rowTotal(r), 0).toLocaleString()} · Paid: ${totals.credit.toLocaleString()} · Remaining: ${(rows.reduce((s, r) => s + rowTotal(r), 0) - totals.credit).toLocaleString()}`,
+      `Range: ${htmlEscape(from)} → ${htmlEscape(to)} · Showing ${rows.length} of ${totalRows} matches`,
+      `Total: ${rows.reduce((s, r) => s + rowTotal(r), 0).toLocaleString()} · Paid: ${pageTotals.credit.toLocaleString()} · Remaining: ${(rows.reduce((s, r) => s + rowTotal(r), 0) - pageTotals.credit).toLocaleString()}`,
     ].filter(Boolean).join(' · ')
 
     const descLines = rows
@@ -304,7 +312,7 @@ export default function ReportsPage() {
 
     const sub = [
       party.name ? `Party: ${htmlEscape(party.name)}` : null,
-      `Range: ${from} → ${to}`,
+      `Range: ${htmlEscape(from)} → ${htmlEscape(to)} · Showing ${rows.length} of ${totalRows} matches`,
     ].filter(Boolean).join(' · ')
 
     const html = `
@@ -348,7 +356,7 @@ export default function ReportsPage() {
           <div className="absolute -right-10 -top-10 h-40 w-40 rounded-full bg-white/10 blur-2xl" />
           <h1 className="text-2xl font-semibold tracking-tight md:text-3xl">Reports</h1>
           <p className="mt-1 max-w-2xl text-sm text-white/85">
-            Filter and export statements and monthly summaries.
+            Filter and export statements and monthly summaries. Showing {rows.length} of {totalRows} matches.
           </p>
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
             <div className="rounded-xl bg-white/10 p-4">

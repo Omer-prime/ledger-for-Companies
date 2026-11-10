@@ -1,4 +1,4 @@
-import { amount, apiError, dateOnly, id, readBody, requirePermission, text } from '@/lib/api-security'
+import { amount, apiError, dateOnly, id, readBody, requirePermission, text, safeApi } from '@/lib/api-security'
 import { z } from 'zod'
 import { NextResponse } from 'next/server'
 import { dbConnect } from '@/lib/db'
@@ -11,7 +11,7 @@ type InsertDoc = Pick<
   'date' | 'voucherNo' | 'description' | 'debit' | 'credit' | 'meta'
 > & { account: Types.ObjectId }
 
-export async function POST(req: Request) {
+export const POST = safeApi(async function POST(req: Request) {
   const denied = await requirePermission('post', req)
   if (denied) return denied
   await dbConnect()
@@ -27,7 +27,7 @@ export async function POST(req: Request) {
   if (!body) return apiError(400, 'Invalid transaction payload')
   const { categoryId, rows } = body
   const partyIds = [...new Set(rows.flatMap(row => row.partyId ? [row.partyId.toLowerCase()] : []))]
-  if (await Account.countDocuments({ _id: { $in: partyIds } }) !== partyIds.length) {
+  if (await Account.countDocuments({ _id: { $in: partyIds }, archivedAt: null }) !== partyIds.length) {
     return apiError(400, 'Unknown party')
   }
   if (rows.some(row => !row.date && (row.debit || row.credit || row.description || row.voucherNo))) {
@@ -81,4 +81,4 @@ export async function POST(req: Request) {
 
   await Transaction.insertMany(docs)
   return NextResponse.json({ inserted: docs.length })
-}
+})

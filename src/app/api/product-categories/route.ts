@@ -1,9 +1,9 @@
-import { apiError, escapeRegex, named, readBody, requirePermission, validateQuery } from '@/lib/api-security'
+import { apiError, escapeRegex, named, readBody, requirePermission, validateQuery, safeApi } from '@/lib/api-security'
 import { NextResponse } from 'next/server'
 import { dbConnect } from '@/lib/db'
 import { Account } from '@/models/Account'
 
-export async function GET(req: Request) {
+export const GET = safeApi(async function GET(req: Request) {
   const denied = await requirePermission('read')
   if (denied) return denied
   if (!validateQuery(req)) return apiError(400, 'Invalid query')
@@ -15,9 +15,9 @@ export async function GET(req: Request) {
 
   const list = await Account.find(match).sort({ name: 1 }).limit(q ? 100 : 300).lean()
   return NextResponse.json(list)
-}
+})
 
-export async function POST(req: Request) {
+export const POST = safeApi(async function POST(req: Request) {
   const denied = await requirePermission('configure', req)
   if (denied) return denied
   await dbConnect()
@@ -27,4 +27,4 @@ export async function POST(req: Request) {
   if (!name?.trim()) return NextResponse.json({ error: 'name required' }, { status: 400 })
   const created = await Account.create({ name: name.trim(), code: code?.trim(), type: 'category' })
   return NextResponse.json(created, { status: 201 })
-}
+})

@@ -1,4 +1,4 @@
-import { apiError, requirePermission, validateQuery } from '@/lib/api-security'
+import { apiError, requirePermission, validateQuery, safeApi } from '@/lib/api-security'
 import { NextRequest, NextResponse } from 'next/server'
 import { dbConnect } from '@/lib/db'
 import { Account } from '@/models/Account'
@@ -9,7 +9,7 @@ function escapeRegex(s: string) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
 
 type ProductRow = { _id: unknown; name: string; code?: string }
 
-export async function GET(req: NextRequest) {
+export const GET = safeApi(async function GET(req: NextRequest) {
   const denied = await requirePermission('read')
   if (denied) return denied
   if (!validateQuery(req)) return apiError(400, 'Invalid query')
@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
   const limitRaw = Number(searchParams.get('limit') || '10')
   const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 50) : 10
 
-  const filter: Record<string, unknown> = { type: 'product' }
+  const filter: Record<string, unknown> = { type: 'product', archivedAt: null }
   if (q) filter.name = { $regex: escapeRegex(q), $options: 'i' }
 
   const docs = await Account.find(filter)
@@ -29,4 +29,4 @@ export async function GET(req: NextRequest) {
 
   const data = docs.map((d) => ({ id: String(d._id), name: d.name, code: d.code ?? '' }))
   return NextResponse.json(data)
-}
+})

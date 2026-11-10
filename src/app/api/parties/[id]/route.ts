@@ -1,10 +1,10 @@
-import { requirePermission } from '@/lib/api-security'
+import { requirePermission, safeApi } from '@/lib/api-security'
 import { NextResponse } from 'next/server'
 import { dbConnect } from '@/lib/db'
 import { Account } from '@/models/Account'
 import mongoose from 'mongoose'
 
-export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+export const DELETE = safeApi(async function DELETE(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const denied = await requirePermission('configure', _req)
   if (denied) return denied
   await dbConnect()
@@ -14,6 +14,6 @@ export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string 
     return NextResponse.json({ error: 'bad id' }, { status: 400 })
   }
 
-  await Account.deleteOne({ _id: id, type: 'party' })
+  await Account.updateOne({ _id: id, type: 'party', archivedAt: null }, { $set: { archivedAt: new Date() } })
   return NextResponse.json({ ok: true })
-}
+})
