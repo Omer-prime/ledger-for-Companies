@@ -61,6 +61,43 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
     assert.equal(initial.sameSite, 'Lax')
     assert.ok(initial.expires > Date.now() / 1000)
 
+    assert.equal(await page.evaluate(async () => {
+      const response = await fetch('/api/products', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Browser fixture fabric' }),
+      })
+      return response.status
+    }), 201)
+
+    for (const [kind, label, partyPlaceholder, qtyIndex] of [
+      ['purchases', 'Purchase', 'Party…', 1],
+      ['sales', 'Sales', 'Customer…', 0],
+    ]) {
+      await page.goto(origin + '/admin/' + kind)
+      const document = page.getByLabel(label + ' document number')
+      await document.fill('BROWSER-' + kind)
+      const row = page.locator('table tbody tr').first()
+      await row.getByPlaceholder(partyPlaceholder).fill('Fixture account')
+      await page.getByRole('option', { name: 'Fixture account' }).click()
+      await row.getByPlaceholder('Product…').fill('Browser fixture fabric')
+      await page.getByRole('option', { name: 'Browser fixture fabric' }).click()
+      const qty = row.locator('input[type=number]').nth(qtyIndex)
+      await qty.fill('2')
+      let posts = 0
+      const onRequest = request => {
+        if (request.method() === 'POST' && request.url().endsWith('/api/inventory/' + kind + '/bulk')) posts++
+      }
+      page.on('request', onRequest)
+      await page.getByRole('button', { name: 'Save', exact: true }).evaluate(button => {
+        button.click()
+        button.click()
+      })
+      await page.getByText('Saved ✔', { exact: true }).waitFor()
+      assert.equal(await document.inputValue(), '')
+      assert.equal(await qty.inputValue(), '')
+      assert.equal(posts, 1)
+      page.off('request', onRequest)
+    }
+
     await page.goto(origin + '/admin/inventory')
     const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Download PDF' }).click()])
     assert.match(download.suggestedFilename(), /^inventory-.*\.pdf$/)

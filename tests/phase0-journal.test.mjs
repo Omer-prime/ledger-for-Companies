@@ -35,7 +35,21 @@ test('journal posting retries and a single reversal preserve the original entry'
       sourceEventId: 'journal-fixture-original', actor: 'fixture', reason: 'Fixture sale',
       lines: [{ accountId, debitPaisa: 300, creditPaisa: 0 }, { accountId: incomeId, debitPaisa: 0, creditPaisa: 300 }],
     }
-    const original = await postJournal(posting)
+    const stock = connection.collection('journal_test_stock')
+    await assert.rejects(connection.transaction(async session => {
+      await stock.insertOne({ sourceEventId: posting.sourceEventId }, { session })
+      await postJournal(posting, session)
+      throw new Error('Rollback fixture')
+    }), /Rollback fixture/)
+    assert.equal(await stock.countDocuments(), 0)
+    assert.equal(await connection.collection('journal_entries').countDocuments(), 0)
+    const original = await connection.transaction(async session => {
+      await stock.insertOne({ sourceEventId: posting.sourceEventId }, { session })
+      const entry = await postJournal(posting, session)
+      assert.deepEqual(await postJournal(posting, session), entry)
+      return entry
+    })
+    assert.equal(await stock.countDocuments(), 1)
     assert.deepEqual(await postJournal(posting), original)
     await assert.rejects(postJournal({ ...posting, reason: 'Changed payload' }), /idempotency conflict/)
     const reversal = {
