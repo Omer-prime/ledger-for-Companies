@@ -29,12 +29,12 @@ test('resource methods check permissions before handler work', async () => {
     const path = entry.replaceAll('\\', '/')
     if (!path.endsWith('/route.ts') || /^(auth|dev)\//.test(path)) continue
     const source = await readFile(new URL(path, root), 'utf8')
-    for (const method of source.matchAll(/export async function (GET|POST|DELETE|PATCH)\([\s\S]*?\) \{\r?\n([^\r\n]+)/g)) {
+    for (const method of source.matchAll(/export (?:async function |const \w+ = safeApi\(async function )(GET|POST|DELETE|PATCH)\([\s\S]*?\) \{\r?\n([^\r\n]+)/g)) {
       handlers++
-      assert.match(method[2], /requirePermission\(|return immutable\(/, path + ' ' + method[1])
+      assert.match(method[2], /requirePermission\(|return immutable\(|return postInventory\(/, path + ' ' + method[1])
     }
   }
-  assert.equal(handlers, 31)
+  assert.equal(handlers, 32)
 })
 
 test('mocked sessions reject forged tokens and enforce role and origin checks', async () => {

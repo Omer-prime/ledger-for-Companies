@@ -19,8 +19,9 @@ test('Phase 0 HTTP and replica-set acceptance rehearsal', async () => {
   const admin = 'phase0-admin@example.test'
   const member = 'phase0-member@example.test'
   const jar = name => '__Host-ledger_session=' + name
-  async function request(path, { method = 'GET', cookie, body, requestOrigin = origin } = {}) {
+  async function request(path, { method = 'GET', cookie, body, requestOrigin = origin, key = crypto.randomUUID() } = {}) {
     const headers = { Origin: requestOrigin }
+    if (method === 'POST' && path.startsWith('inventory/')) headers['Idempotency-Key'] = key
     if (cookie) headers.Cookie = cookie
     if (body !== undefined) headers['Content-Type'] = 'application/json'
     return fetch(origin + '/api/' + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) })
@@ -91,7 +92,7 @@ test('Phase 0 HTTP and replica-set acceptance rehearsal', async () => {
     assert.equal((await request('users', { cookie: memberCookie })).status, 403)
     assert.equal((await request('transactions/search', { cookie: memberCookie })).status, 200)
     assert.equal((await request('transactions', { method: 'POST', cookie: memberCookie, requestOrigin: 'https://unrelated.example.test', body: {} })).status, 403)
-    assert.equal((await request('transactions', { method: 'POST', cookie: memberCookie, body: { accountId: String(legacyRow.account), date: '2025-01-02', debit: 4 } })).status, 201)
+    assert.equal((await request('transactions', { method: 'POST', cookie: memberCookie, body: { accountId: String(legacyRow.account), date: '2025-01-02', debit: 4, description: 'Fixture printable row' } })).status, 201)
     for (const method of ['PATCH', 'DELETE']) {
       assert.equal((await request('transactions/' + legacyRow._id, { method, cookie })).status, 409)
     }
@@ -106,6 +107,62 @@ test('Phase 0 HTTP and replica-set acceptance rehearsal', async () => {
     const summary = await request('inventory/summary?productId=' + productId, { cookie })
     assert.equal(summary.status, 200)
     assert.deepEqual(await summary.json(), { qty: 10, value: 50, avg: 5 })
+    assert.equal((await request('inventory/opening/bulk', { method: 'POST', cookie, body: opening })).status, 409)
+    const sale = { rows: [{ type: 'sale', productId, date: '2025-01-03', qty: 7, meta: { stockAfter: 10000 } }] }
+    const saleKeys = [crypto.randomUUID(), crypto.randomUUID()]
+    const outcomes = await Promise.all(saleKeys.map(key => request('inventory/sales/bulk', { method: 'POST', cookie, body: sale, key })))
+    assert.deepEqual(outcomes.map(response => response.status).sort(), [201, 409])
+    const winner = outcomes.findIndex(response => response.status === 201)
+    const posted = await outcomes[winner].json()
+    const retry = await request('inventory/sales/bulk', { method: 'POST', cookie, body: sale, key: saleKeys[winner] })
+    assert.deepEqual(await retry.json(), posted)
+    assert.equal(await db.collection('inventorymovements').countDocuments({ eventId: posted.eventId }), 1)
+    assert.equal((await request('inventory/sales/bulk', { method: 'POST', cookie, body: sale })).status, 409)
+    const newSale = { rows: [{ ...sale.rows[0], qty: 1, partyId: String(new mongoose.Types.ObjectId()) }] }
+    assert.equal((await request('inventory/sales/bulk', { method: 'POST', cookie, body: newSale })).status, 400)
+    const purchase = { rows: [{ type: 'purchase', productId, date: '2025-01-03', qty: 4, rate: 5, waste: 2 }] }
+    assert.equal((await request('inventory/purchases/bulk', { method: 'POST', cookie, body: purchase })).status, 201)
+    for (const adjustment of [{ direction: 'increase', rate: 5 }, { direction: 'decrease' }]) {
+      const body = { rows: [{ type: 'adjustment', productId, date: '2025-01-03', qty: 1, reason: 'Fixture correction', ...adjustment }] }
+      assert.equal((await request('inventory/adjustments/bulk', { method: 'POST', cookie, body })).status, 201)
+    }
+    assert.equal((await request('products/' + productId, { method: 'DELETE', cookie })).status, 200)
+    assert.ok((await db.collection('accounts').findOne({ _id: new mongoose.Types.ObjectId(productId) })).archivedAt)
+    assert.equal((await request('inventory/sales/bulk', { method: 'POST', cookie, body: { rows: [{ ...sale.rows[0], qty: 1 }] } })).status, 400)
+    assert.equal((await (await request('inventory/summary?productId=' + productId, { cookie })).json()).qty, 5)
+
+    const historical = Array.from({ length: 2003 }, () => ({
+      account: legacyRow.account, date: new Date('2024-01-01'), debit: 2, credit: 1,
+    }))
+    const category = await request('categories', { method: 'POST', cookie, body: { name: 'Fixture category' } })
+    assert.equal(category.status, 201)
+    const categoryId = (await category.json())._id
+    historical[0].meta = { categoryId }
+    await transactions.insertMany(historical)
+    assert.equal((await request('categories/' + categoryId, { method: 'DELETE', cookie })).status, 200)
+    assert.ok((await db.collection('ledgercategories').findOne({ _id: new mongoose.Types.ObjectId(categoryId) })).archivedAt)
+    const archivedReport = await (await request('transactions/search?categoryId=' + categoryId, { cookie })).json()
+    assert.equal(archivedReport.totalRows, 1)
+    const report = await (await request('transactions/search?limit=2000&from=2024-01-01&to=2024-01-01', { cookie })).json()
+    assert.equal(report.rows.length, 2000)
+    assert.equal(report.totalRows, 2003)
+    assert.deepEqual(report.totals, { debit: 4006, credit: 2003 })
+    const lastPage = await (await request('transactions/search?limit=2000&page=2&from=2024-01-01&to=2024-01-01', { cookie })).json()
+    assert.equal(lastPage.rows.length, 3)
+    assert.deepEqual(lastPage.totals, report.totals)
+
+    await db.command({ collMod: 'transactions', validator: { description: 'allowed-fixture-value' } })
+    try {
+      const failure = await request('transactions', {
+        method: 'POST', cookie,
+        body: { accountId: String(legacyRow.account), debit: 1, description: 'fixture-confidential-driver-marker' },
+      })
+      assert.equal(failure.status, 503)
+      assert.deepEqual(await failure.json(), { error: 'Service unavailable' })
+    } finally {
+      await db.command({ collMod: 'transactions', validator: {} })
+    }
+
 
 
     assert.equal((await request('auth/logout', { method: 'POST', cookie })).status, 200)
