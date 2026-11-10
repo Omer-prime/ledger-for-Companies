@@ -63,7 +63,7 @@ export async function POST(req: Request) {
 
     const accountId: Types.ObjectId =
       r.partyId
-        ? new mongoose.Types.ObjectId(r.partyId)
+        ? new Types.ObjectId(r.partyId)
         : unassigned._id as Types.ObjectId
 
     docs.push({

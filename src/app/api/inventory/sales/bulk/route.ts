@@ -2,7 +2,7 @@ import { amount, apiError, dateOnly, id, readBody, requirePermission } from '@/l
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { dbConnect } from '@/lib/db'
-import InventoryMovement, { isObjectId } from '@/models/InventoryMovement'
+import InventoryMovement from '@/models/InventoryMovement'
 
 const Row = z.strictObject({
   type: z.literal('sale'),
