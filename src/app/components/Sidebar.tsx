@@ -17,9 +17,10 @@ const items = [
   { href: '/admin/purchases', label: 'Purchases' },
   { href: '/admin/sales', label: 'Sales' },
   { href: '/admin/inventory', label: 'Inventory' },
+  { href: '/admin/business-settings', label: 'Business settings', configureOnly: true },
 ]
 
-export default function Sidebar() {
+export default function Sidebar({ canConfigureBusiness }: { canConfigureBusiness: boolean }) {
   const pathname = usePathname()
   const router = useRouter()
   const [open, setOpen] = useState(false)
@@ -78,7 +79,7 @@ export default function Sidebar() {
             {/* Links */}
             <nav className="flex-1 overflow-auto pr-1">
               <ul className="space-y-1 text-sm">
-                {items.map((it) => {
+                {items.filter(it => !it.configureOnly || canConfigureBusiness).map((it) => {
                   const active = it.href === activeHref
                   return (
                     <li key={it.href}>
@@ -140,7 +141,7 @@ export default function Sidebar() {
           </div>
         )
       },
-    [activeHref] // eslint-disable-line react-hooks/exhaustive-deps
+    [activeHref, canConfigureBusiness] // eslint-disable-line react-hooks/exhaustive-deps
   )
 
   return (
