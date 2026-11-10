@@ -1,3 +1,4 @@
+import type { ClientSession } from 'mongoose'
 import { Account } from '@/models/Account'
 import { dbConnect } from '@/lib/db'
 import { digest } from '@/lib/auth'
@@ -12,7 +13,7 @@ type Posting = {
 }
 
 // Internal foundation. Legacy Transaction records are never read or rewritten here.
-export async function postJournal(posting: Posting) {
+export async function postJournal(posting: Posting, transaction?: ClientSession) {
   if (!/^[a-zA-Z0-9_-]{16,128}$/.test(posting.sourceEventId) || !posting.actor.trim() || !posting.reason.trim()) {
     throw new Error('Missing journal audit information')
   }
@@ -20,7 +21,7 @@ export async function postJournal(posting: Posting) {
   const entries = connection.collection<Posting & { _id: string; fingerprint: string; postedAt: Date; currency: 'PKR' }>('journal_entries')
   const reversals = connection.collection<{ _id: string; reversalEventId: string }>('journal_reversals')
   const postedAt = new Date()
-  return connection.transaction(async session => {
+  const append = async (session: ClientSession) => {
     let lines = posting.lines
     if (posting.reverses) {
       const original = await entries.findOne({ _id: posting.reverses }, { session })
@@ -44,5 +45,10 @@ export async function postJournal(posting: Posting) {
     const entry = { ...posting, _id: posting.sourceEventId, fingerprint, lines, postedAt, currency: 'PKR' as const }
     await entries.insertOne(entry, { session })
     return entry
-  })
+  }
+  if (transaction) {
+    if (!transaction.inTransaction()) throw new Error('Journal requires an active transaction')
+    return append(transaction)
+  }
+  return connection.transaction(append)
 }

@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server'
 import { dbConnect } from '@/lib/db'
 import { Transaction, type ITransaction } from '@/models/Transaction'
 import { Account } from '@/models/Account'
+import { LedgerCategory } from '@/models/LedgerCategory'
 import mongoose from 'mongoose'
 import { computeRunning, groupTotals, type LedgerRow } from '@/lib/ledger'
 
@@ -77,12 +78,16 @@ export const POST = safeApi(async function POST(req: Request) {
   if (denied) return denied
   await dbConnect()
   const body = await readBody(req, z.strictObject({
-    accountId: id.optional(), categoryId: id.optional(), date: dateOnly.optional(),
+    accountId: id.optional(), categoryId: id.transform(value => value.toLowerCase()).optional(), date: dateOnly.optional(),
     voucherNo: text.optional(), description: text.optional(), debit: amount.optional(), credit: amount.optional(),
   }))
   if (!body) return apiError(400, 'Invalid transaction payload')
 
   const { accountId, date, voucherNo, description, debit, credit, categoryId } = body
+
+  if (categoryId && !(await LedgerCategory.exists({ _id: categoryId, archivedAt: null }))) {
+    return apiError(400, 'Unknown or archived category')
+  }
 
   let acc =
     accountId && mongoose.Types.ObjectId.isValid(accountId)
@@ -92,7 +97,7 @@ export const POST = safeApi(async function POST(req: Request) {
   if (accountId && !acc) return apiError(400, 'Unknown account')
   if (!acc) {
     acc =
-      (await Account.findOne({ name: 'Unassigned', type: 'gl' })) ||
+      (await Account.findOne({ name: 'Unassigned', type: 'gl', archivedAt: null })) ||
       (await Account.create({ name: 'Unassigned', type: 'gl' }))
   }
 

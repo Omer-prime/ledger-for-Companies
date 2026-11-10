@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { NextResponse } from 'next/server'
 import { dbConnect } from '@/lib/db'
 import { Account } from '@/models/Account'
+import { LedgerCategory } from '@/models/LedgerCategory'
 import { Transaction, type ITransaction } from '@/models/Transaction'
 import { Types } from 'mongoose'
 
@@ -17,7 +18,7 @@ export const POST = safeApi(async function POST(req: Request) {
   await dbConnect()
 
   const body = await readBody(req, z.strictObject({
-    categoryId: id.optional(),
+    categoryId: id.transform(value => value.toLowerCase()).optional(),
     rows: z.array(z.strictObject({
       date: z.union([dateOnly, z.literal('')]).optional(), voucherNo: text.optional(), description: text.optional(),
       debit: amount.nullish(), credit: amount.nullish(), partyId: id.nullish(),
@@ -26,6 +27,10 @@ export const POST = safeApi(async function POST(req: Request) {
   }))
   if (!body) return apiError(400, 'Invalid transaction payload')
   const { categoryId, rows } = body
+  if (categoryId && !(await LedgerCategory.exists({ _id: categoryId, archivedAt: null }))) {
+    return apiError(400, 'Unknown or archived category')
+  }
+
   const partyIds = [...new Set(rows.flatMap(row => row.partyId ? [row.partyId.toLowerCase()] : []))]
   if (await Account.countDocuments({ _id: { $in: partyIds }, archivedAt: null }) !== partyIds.length) {
     return apiError(400, 'Unknown party')
@@ -37,7 +42,7 @@ export const POST = safeApi(async function POST(req: Request) {
   if (!rows?.length) return NextResponse.json({ inserted: 0 })
 
   // Ensure an "Unassigned" GL account for non-party rows
-  let unassigned = await Account.findOne({ name: 'Unassigned', type: 'gl' })
+  let unassigned = await Account.findOne({ name: 'Unassigned', type: 'gl', archivedAt: null })
   if (!unassigned) {
     unassigned = await Account.create({
       name: 'Unassigned',
