@@ -14,6 +14,11 @@ const movementSchema = new Schema(
     qty: { type: Number, required: true, min: 0 },
     rate: { type: Number },      // opening avg cost or purchase unit cost
     sellRate: { type: Number },  // optional sale price
+    direction: { type: String, enum: ['increase', 'decrease'] },
+    eventId: { type: String, index: true },
+    sequence: Number,
+    actor: String,
+    postedAt: Date,
     meta: { type: Schema.Types.Mixed, default: {} },
   },
   { timestamps: true }

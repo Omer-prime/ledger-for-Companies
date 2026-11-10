@@ -4,11 +4,13 @@ export interface ILedgerCategory {
   name: string
   slug: string
   defaultColumns?: Array<{ key: string; label: string; type: 'text'|'number'|'date' }>
+  archivedAt?: Date
   createdAt: Date
   updatedAt: Date
 }
 
 const schema = new Schema<ILedgerCategory>({
+  archivedAt: Date,
   name: { type: String, required: true, trim: true },
   slug: { type: String, required: true, unique: true, lowercase: true, trim: true },
   defaultColumns: { type: Array }

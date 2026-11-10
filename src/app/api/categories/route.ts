@@ -1,17 +1,23 @@
+import { apiError, named, readBody, requirePermission, safeApi } from '@/lib/api-security'
 import { NextResponse } from 'next/server'
 import { dbConnect } from '@/lib/db'
 import { LedgerCategory } from '@/models/LedgerCategory'
 
-export async function GET() {
+export const GET = safeApi(async function GET() {
+  const denied = await requirePermission('read')
+  if (denied) return denied
   await dbConnect()
-  const list = await LedgerCategory.find().sort({ name: 1 }).lean()
+  const list = await LedgerCategory.find({ archivedAt: null }).sort({ name: 1 }).lean()
   return NextResponse.json(list)
-}
+})
 
-export async function POST(req: Request) {
+export const POST = safeApi(async function POST(req: Request) {
+  const denied = await requirePermission('configure', req)
+  if (denied) return denied
   await dbConnect()
-  const { name } = await req.json()
-  if (!name) return NextResponse.json({ error: 'name required' }, { status: 400 })
+  const body = await readBody(req, named)
+  if (!body) return apiError(400, 'Invalid payload')
+  const { name } = body
 
   const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-')
   const created = await LedgerCategory.create({
@@ -25,4 +31,4 @@ export async function POST(req: Request) {
     ],
   })
   return NextResponse.json(created, { status: 201 })
-}
+})

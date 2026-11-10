@@ -1,6 +1,8 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { inventoryPostHeaders, finishInventoryRequest } from '@/lib/inventory-request'
+
+import { useMemo, useRef, useState } from 'react'
 import dayjs from 'dayjs'
 import PartyAutocomplete, { type PartyOption } from '../../../components/PartyAutocomplete'
 import ProductAutocomplete, { type ProductOption } from '../../../components/ProductAutocomplete'
@@ -34,6 +36,8 @@ export default function PurchasesPage() {
   const [rows, setRows] = useState<Row[]>(
     Array.from({ length: 10 }, () => ({ date: dayjs().format('YYYY-MM-DD') })),
   )
+  const submitting = useRef(false)
+  const [documentNumber, setDocumentNumber] = useState('')
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
 
@@ -115,10 +119,15 @@ export default function PurchasesPage() {
   }, [rows, summ])
 
   async function save(): Promise<void> {
-    setSaving(true); setMsg(null)
-    const payload = rows
-      .filter(r => r.product?.id && r.party?.id && (r.qty || r.waste))
-      .map((r, idx) => ({
+    if (submitting.current) return
+    if (!documentNumber.trim()) { setMsg('Enter the document number'); return }
+    const entered = rows.filter(row => row.party?.name || row.product?.name || row.qty || row.rate || row.waste)
+    if (entered.some(row => !row.party?.id || !row.product?.id || !row.qty || row.qty <= 0)) {
+      setMsg('Complete or clear all entered rows')
+      return
+    }
+    const payload = entered
+      .map(r => ({
         type: 'purchase' as const,
         date: r.date || dayjs().format('YYYY-MM-DD'),
         partyId: r.party!.id!,
@@ -126,19 +135,25 @@ export default function PurchasesPage() {
         rate: Number(r.rate || 0),
         qty: Number(r.qty || 0),
         waste: Number(r.waste || 0),
-        meta: {
-          price: computed[idx]?.price || 0,
-          stockAfter: computed[idx]?.stock || 0,
-          totalValueAfter: computed[idx]?.totalPrice || 0,
-          avgCostAfter: computed[idx]?.avgPrice || 0,
-        },
       }))
 
+    if (!payload.length) { setMsg('Enter at least one complete row'); return }
+    submitting.current = true
+    setSaving(true)
+    setMsg(null)
+    const body = { documentNumber: documentNumber.trim().toUpperCase(), rows: payload }
     const r = await fetch('/api/inventory/purchases/bulk', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rows: payload }),
-    })
+      headers: inventoryPostHeaders('purchases', body),
+      body: JSON.stringify(body),
+    }).catch(() => new Response(null, { status: 503 }))
+    if (r.ok) {
+      finishInventoryRequest('purchases')
+      setRows([{ date: dayjs().format('YYYY-MM-DD') }])
+      setDocumentNumber('')
+      setSumm({})
+    }
+    submitting.current = false
     setSaving(false)
     setMsg(r.ok ? 'Saved ✔' : 'Save failed')
   }
@@ -177,11 +192,12 @@ export default function PurchasesPage() {
     }
     const res = await fetch('/api/inventory/opening/bulk', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: inventoryPostHeaders('opening', body),
       body: JSON.stringify(body),
-    })
+    }).catch(() => new Response(null, { status: 503 }))
     setOpening(o => ({ ...o, saving: false }))
     if (res.ok) {
+      finishInventoryRequest('opening')
       await ensureSummary(opening.product.id!, true)
       closeOpening()
       setMsg('Opening stock set ✔')
@@ -193,6 +209,7 @@ export default function PurchasesPage() {
 
   return (
     <div className="space-y-4">
+      <fieldset disabled={saving} className="min-w-0 space-y-4">
       {/* Controls */}
       <div className="no-print sticky top-2 z-50 flex flex-wrap items-center gap-2">
         <button
@@ -201,7 +218,10 @@ export default function PurchasesPage() {
         >
           + Add 10 rows
         </button>
-        <button
+        <input aria-label="Purchase document number" placeholder="Purchase document number"
+              value={documentNumber} onChange={event => setDocumentNumber(event.target.value)}
+              maxLength={64} disabled={saving} className="rounded-xl border px-3 py-2" />
+            <button
           onClick={save}
           disabled={saving}
           className="rounded-xl bg-blue-600 px-5 py-2 text-white shadow-lg hover:bg-blue-700 active:translate-y-[1px] disabled:opacity-60"
@@ -552,6 +572,7 @@ export default function PurchasesPage() {
         /* Helpful to isolate stacking inside the cell wrapper */
         .ac-scope { isolation: isolate; }
       `}</style>
+      </fieldset>
     </div>
   )
 }

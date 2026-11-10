@@ -1,35 +1,45 @@
 import { NextResponse } from 'next/server'
-import { AUTH_COOKIE, type SessionUser, type Role } from '@/lib/auth'
+import { z } from 'zod'
+import { AUTH_COOKIE, SESSION_SECONDS, cookieOptions, createSession, digest, revokeSession } from '@/lib/auth'
+import { apiError, readBody, sameOrigin, safeApi } from '@/lib/api-security'
+import { ROLES } from '@/lib/roles'
+import { verifyPassword } from '@/lib/password'
 import { dbConnect } from '@/lib/db'
 import { User } from '@/models/User'
 
-function makeCookie(user: SessionUser) {
-  const val = Buffer.from(JSON.stringify(user), 'utf8').toString('base64')
-  return val
-}
+const credentials = z.strictObject({
+  email: z.string().trim().toLowerCase().max(254).email(),
+  password: z.string().min(1).max(256),
+})
 
-export async function POST(req: Request) {
-  const { email, password } = await req.json()
+export const POST = safeApi(async function POST(req: Request) {
+  if (!sameOrigin(req)) return apiError(403, 'Invalid request origin')
+  const body = await readBody(req, credentials)
+  if (!body) return apiError(400, 'Invalid credentials payload')
 
-  // ENV superadmin
-  if (email === process.env.ADMIN_EMAIL && password === process.env.ADMIN_PASSWORD) {
-    const res = NextResponse.json({ ok: true, role: 'superadmin' as Role })
-    res.cookies.set(AUTH_COOKIE, makeCookie({ email, role: 'superadmin' }), {
-      httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/', maxAge: 60 * 60 * 8
-    })
-    return res
+  const db = (await dbConnect()).connection
+  const attempts = db.collection<{ _id: string; count: number; expiresAt: Date }>('auth_attempts')
+  const windowMs = 15 * 60 * 1000
+  const window = Math.floor(Date.now() / windowMs)
+  for (const [key, limit] of [['global', 300], [digest(body.email), 10]] as const) {
+    const attempt = await attempts.findOneAndUpdate(
+      { _id: window + ':' + key },
+      { $inc: { count: 1 }, $setOnInsert: { expiresAt: new Date((window + 1) * windowMs) } },
+      { upsert: true, returnDocument: 'after' },
+    )
+    if (!attempt || attempt.count > limit) return apiError(429, 'Too many login attempts')
   }
 
-  // DB user
-  await dbConnect()
-  const u = await User.findOne({ email }).lean()
-  if (!u || u.password !== password) {
-    return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
+  const user = await User.findOne({ email: body.email }).select('+passwordHash').lean()
+  const hash = user?.passwordHash
+  const verified = await verifyPassword(body.password, hash)
+  if (!verified || !user || !hash || user.disabled || !ROLES.includes(user.role)) {
+    return apiError(401, 'Invalid credentials')
   }
 
-  const res = NextResponse.json({ ok: true, role: u.role as Role })
-  res.cookies.set(AUTH_COOKIE, makeCookie({ email: u.email, role: u.role as Role }), {
-    httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/', maxAge: 60 * 60 * 8
-  })
+  await revokeSession()
+  const token = await createSession(user._id, hash)
+  const res = NextResponse.json({ ok: true, role: user.role })
+  res.cookies.set(AUTH_COOKIE, token, { ...cookieOptions, maxAge: SESSION_SECONDS })
   return res
-}
+})

@@ -1,14 +1,12 @@
 import { NextResponse } from 'next/server'
-import { AUTH_COOKIE } from '@/lib/auth'
+import { AUTH_COOKIE, cookieOptions, revokeSession } from '@/lib/auth'
+import { requirePermission, safeApi } from '@/lib/api-security'
 
-export async function POST() {
+export const POST = safeApi(async function POST(req: Request) {
+  const denied = await requirePermission('read', req)
+  if (denied) return denied
+  await revokeSession()
   const res = NextResponse.json({ ok: true })
-  res.cookies.set(AUTH_COOKIE, '', {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
-    path: '/',
-    maxAge: 0,
-  })
+  res.cookies.set(AUTH_COOKIE, '', { ...cookieOptions, maxAge: 0 })
   return res
-}
+})
