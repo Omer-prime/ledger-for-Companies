@@ -2,7 +2,7 @@
 
 import { inventoryPostHeaders, finishInventoryRequest } from '@/lib/inventory-request'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import dayjs from 'dayjs'
 import PartyAutocomplete from '../../../components/PartyAutocomplete'
 import ProductAutocomplete from '../../../components/ProductAutocomplete'
@@ -22,6 +22,8 @@ const fmt = (n: number | null | undefined) => Number(n || 0).toLocaleString()
 export default function SalesPage() {
   const [rows, setRows] = useState<Row[]>([{ date: dayjs().format('YYYY-MM-DD') }])
   const [summ, setSumm] = useState<Record<string, Summary>>({})
+  const submitting = useRef(false)
+  const [documentNumber, setDocumentNumber] = useState('')
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
 
@@ -63,40 +65,54 @@ export default function SalesPage() {
   }, [rows, summ])
 
   async function save() {
-    setSaving(true); setMsg(null)
-    const payload = rows
-      .filter(r => r.party?.id && r.product?.id && r.qty)
-      .map((r, idx) => ({
+    if (submitting.current) return
+    if (!documentNumber.trim()) { setMsg('Enter the document number'); return }
+    const entered = rows.filter(row => row.party?.name || row.product?.name || row.qty || row.sellRate)
+    if (entered.some(row => !row.party?.id || !row.product?.id || !row.qty || row.qty <= 0)) {
+      setMsg('Complete or clear all entered rows')
+      return
+    }
+    const payload = entered
+      .map(r => ({
         type: 'sale',
         date: r.date || dayjs().format('YYYY-MM-DD'),
         partyId: r.party!.id,
         productId: r.product!.id,
         qty: Number(r.qty || 0),
         sellRate: Number(r.sellRate || 0),
-        meta: {
-          revenue: computed[idx]?.revenue || 0,
-          cogs: computed[idx]?.cogs || 0,
-          stockAfter: computed[idx]?.stockAfter || 0,
-          avgCostAfter: computed[idx]?.avgAfter || 0,
-        },
       }))
+    if (!payload.length) { setMsg('Enter at least one complete row'); return }
+    submitting.current = true
+    setSaving(true)
+    setMsg(null)
+    const body = { documentNumber: documentNumber.trim().toUpperCase(), rows: payload }
     const r = await fetch('/api/inventory/sales/bulk', {
       method: 'POST',
-      headers: inventoryPostHeaders('sales', { rows: payload }),
-      body: JSON.stringify({ rows: payload }),
+      headers: inventoryPostHeaders('sales', body),
+      body: JSON.stringify(body),
     }).catch(() => new Response(null, { status: 503 }))
-    if (r.ok) finishInventoryRequest('sales')
+    if (r.ok) {
+      finishInventoryRequest('sales')
+      setRows([{ date: dayjs().format('YYYY-MM-DD') }])
+      setDocumentNumber('')
+      setSumm({})
+    }
+    submitting.current = false
     setSaving(false)
     setMsg(r.ok ? 'Saved ✔' : 'Save failed')
   }
 
   return (
     <main className="space-y-4">
+      <fieldset disabled={saving} className="min-w-0 space-y-4">
       <section className="rounded-2xl bg-white p-6 shadow-soft">
         <div className="mb-3 flex items-center justify-between">
           <h1 className="text-xl font-semibold">Sales</h1>
           <div className="flex items-center gap-2">
             <button onClick={() => setRows(p => [...p, { date: dayjs().format('YYYY-MM-DD') }])} className="rounded-xl border bg-white px-4 py-2 shadow hover:bg-slate-50">+ Add row</button>
+            <input aria-label="Sales document number" placeholder="Sales document number"
+              value={documentNumber} onChange={event => setDocumentNumber(event.target.value)}
+              maxLength={64} disabled={saving} className="rounded-xl border px-3 py-2" />
             <button onClick={save} disabled={saving} className="rounded-xl bg-blue-600 px-5 py-2 text-white shadow hover:bg-blue-700 disabled:opacity-60">
               {saving ? 'Saving…' : 'Save'}
             </button>
@@ -159,6 +175,7 @@ export default function SalesPage() {
           Sales reduce stock using the current weighted average cost.
         </p>
       </section>
+      </fieldset>
     </main>
   )
 }

@@ -66,6 +66,7 @@ export async function postInventory(req: Request, kind: 'opening' | 'purchase' |
     const schemas = { opening, purchase, sale, adjustment }
     // Strip deprecated calculated metadata before validation and fingerprinting.
     const schema = z.strictObject({
+      documentNumber: z.string().trim().toUpperCase().regex(/^[A-Z0-9][A-Z0-9._/-]{0,63}$/).optional(),
       rows: z.array(z.preprocess(value => {
         if ((kind === 'opening' || kind === 'adjustment') || !value || typeof value !== 'object' || Array.isArray(value)) return value
         const fields = { ...value } as Record<string, unknown>
@@ -75,17 +76,29 @@ export async function postInventory(req: Request, kind: 'opening' | 'purchase' |
     })
     const body = await readBody(req, schema)
     if (!body) return apiError(400, 'Invalid inventory payload')
+    if ((kind === 'purchase' || kind === 'sale') && !body.documentNumber) return apiError(400, 'Document number required')
     const movements = buildMovements(body.rows)
     const fingerprint = digest(JSON.stringify({ kind, movements }))
-    const eventId = digest(JSON.stringify(['inventory', actor.email, key]))
+    const requestId = digest(JSON.stringify(['inventory', actor.email, key]))
+    const documentNumber = body.documentNumber
+    const eventId = documentNumber ? digest(JSON.stringify(['inventory-document', kind, documentNumber])) : requestId
     const connection = (await dbConnect()).connection
-    const events = connection.collection<{ _id: string; fingerprint: string; inserted: number; actor: string; postedAt: Date }>('inventory_postings')
+    const events = connection.collection<{ _id: string; fingerprint: string; inserted: number; actor: string; postedAt: Date; kind?: string; documentNumber?: string }>('inventory_postings')
+    const requests = connection.collection<{ _id: string; eventId: string }>('inventory_requests')
     const balances = connection.collection<{ _id: Types.ObjectId; qtyUnits: number; hasOpening: boolean; lastDate: Date | null }>('inventory_balances')
     const postedAt = new Date()
     const result = await connection.transaction(async session => {
+      const request = await requests.findOne({ _id: requestId }, { session })
+      const legacyRequest = !request && requestId !== eventId
+        ? await events.findOne({ _id: requestId }, { session })
+        : null
+      if ((request && request.eventId !== eventId) || legacyRequest) {
+        throw new PostingError(409, 'Idempotency key already used')
+      }
       const prior = await events.findOne({ _id: eventId }, { session })
       if (prior) {
-        if (prior.fingerprint !== fingerprint) throw new PostingError(409, 'Idempotency key already used')
+        if (prior.fingerprint !== fingerprint) throw new PostingError(409, 'Posting identifier already used with different data')
+        if (!request) await requests.insertOne({ _id: requestId, eventId }, { session })
         return { inserted: prior.inserted, eventId }
       }
 
@@ -141,7 +154,8 @@ export async function postInventory(req: Request, kind: 'opening' | 'purchase' |
       await InventoryMovement.insertMany(movements.map((movement, sequence) => ({
         ...movement, eventId, sequence, actor: actor.email, postedAt,
       })), { session })
-      await events.insertOne({ _id: eventId, fingerprint, inserted: movements.length, actor: actor.email, postedAt }, { session })
+      await events.insertOne({ _id: eventId, fingerprint, inserted: movements.length, actor: actor.email, postedAt, kind, documentNumber }, { session })
+      await requests.insertOne({ _id: requestId, eventId }, { session })
       return { inserted: movements.length, eventId }
     })
     return Response.json(result, { status: kind === 'opening' ? 200 : 201 })
