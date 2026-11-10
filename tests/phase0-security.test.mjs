@@ -34,7 +34,7 @@ test('resource methods check permissions before handler work', async () => {
       assert.match(method[2], /requirePermission\(|return immutable\(|return postInventory\(/, path + ' ' + method[1])
     }
   }
-  assert.equal(handlers, 34)
+  assert.equal(handlers, 36)
 })
 
 test('mocked sessions reject forged tokens and enforce role and origin checks', async () => {
