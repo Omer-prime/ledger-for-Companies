@@ -1,9 +1,12 @@
+import { requirePermission } from '@/lib/api-security'
 import { NextResponse } from 'next/server'
 import { dbConnect } from '@/lib/db'
 import { Account } from '@/models/Account'
 import mongoose from 'mongoose'
 
 export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const denied = await requirePermission('configure', _req)
+  if (denied) return denied
   await dbConnect()
 
   const { id } = await ctx.params // ⬅️ must await in Next 15

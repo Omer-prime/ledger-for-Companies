@@ -17,8 +17,6 @@ type Row = {
 type Cat = { _id: string; name: string }
 type Monthly = { key: string; debit: number; credit: number; net: number }
 
-type Role = 'superadmin' | 'admin' | 'manager' | 'accountant'
-type Me = { role: Role } | null
 
 type Totals = { debit: number; credit: number }
 
@@ -59,36 +57,10 @@ export default function ReportsPage() {
     return Number(r.debit || 0) + Number(r.credit || 0)
   }
 
-  // auth
-  const [me, setMe] = useState<Me>(null)
-  useEffect(() => {
-    void (async () => {
-      try {
-        const r = await fetch('/api/auth/me', { cache: 'no-store', credentials: 'include' })
-        if (r.ok) {
-          const j = (await r.json()) as { role?: Role }
-          const role = j?.role
-          if (role === 'superadmin' || role === 'admin' || role === 'manager' || role === 'accountant') {
-            setMe({ role })
-          } else {
-            setMe(null)
-          }
-        }
-      } catch {
-        setMe(null)
-      }
-    })()
-  }, [])
-  const isAdmin = me?.role === 'admin' || me?.role === 'superadmin'
-
   // filters
   const [party, setParty] = useState<{ id?: string; name: string }>({ name: '' })
   const [cats, setCats] = useState<Cat[]>([])
   const [categoryId, setCategoryId] = useState<string>('')
-
-  // edit mode
-  const [edit, setEdit] = useState<boolean>(false)
-  const [dirty, setDirty] = useState<Record<string, Partial<Row>>>({})
 
   // add form
   const [add, setAdd] = useState<{
@@ -125,7 +97,6 @@ export default function ReportsPage() {
     const json: { rows: Row[]; totals: Totals } = await res.json()
     setRows(json.rows)
     setTotals(json.totals)
-    setDirty({})
     setLoading(false)
   }, [q, from, to, party.id, categoryId])
 
@@ -154,26 +125,6 @@ export default function ReportsPage() {
     return { due, paid, rem }
   }, [rows, totals.credit])
 
-  function onCellChange(id: string, key: keyof Row, val: unknown) {
-    setDirty(prev => ({ ...prev, [id]: { ...prev[id], [key]: val as never } }))
-    setRows(prev => prev.map(r => (r._id === id ? { ...r, [key]: val as never } : r)))
-  }
-
-  async function saveChanges() {
-    const ids = Object.keys(dirty)
-    if (!ids.length) return
-    await Promise.all(
-      ids.map((id) =>
-        fetch(`/api/transactions/${id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(dirty[id]),
-        }),
-      ),
-    )
-    await search()
-  }
-
   async function addRow() {
     const body = {
       accountId: party.id,
@@ -197,19 +148,6 @@ export default function ReportsPage() {
     }
   }
 
-  async function deleteRow(id: string) {
-    if (!isAdmin) return
-    const ok = window.confirm('Delete this transaction? This cannot be undone.')
-    if (!ok) return
-    const res = await fetch(`/api/transactions/${id}`, { method: 'DELETE' })
-    if (res.ok) {
-      setRows(prev => prev.filter(r => r._id !== id))
-      await search()
-    } else {
-      const msg = await res.text().catch(() => '')
-      alert(msg || 'Delete failed')
-    }
-  }
 
   /* ======================= EXPORT HELPERS ======================= */
   const metaKeys: string[] = useMemo(() => {
@@ -410,7 +348,7 @@ export default function ReportsPage() {
           <div className="absolute -right-10 -top-10 h-40 w-40 rounded-full bg-white/10 blur-2xl" />
           <h1 className="text-2xl font-semibold tracking-tight md:text-3xl">Reports</h1>
           <p className="mt-1 max-w-2xl text-sm text-white/85">
-            Filter, edit inline, export statements and monthly summaries.
+            Filter and export statements and monthly summaries.
           </p>
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
             <div className="rounded-xl bg-white/10 p-4">
@@ -540,18 +478,6 @@ export default function ReportsPage() {
               </span>
             )}
             <span className="ml-auto flex items-center gap-2">
-              <label className="flex items-center gap-2 text-xs">
-                <input type="checkbox" checked={edit} onChange={(e) => setEdit(e.target.checked)} />
-                Enable inline editing
-              </label>
-              <button
-                onClick={() => void saveChanges()}
-                className="rounded-xl border px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
-                disabled={!Object.keys(dirty).length}
-                title={Object.keys(dirty).length ? 'Save changes' : 'No changes'}
-              >
-                Save changes
-              </button>
               <button
                 onClick={exportResultsPDF}
                 className="rounded-xl border px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
@@ -642,91 +568,36 @@ export default function ReportsPage() {
                 <th className="px-3 py-2 text-right">Total</th>
                 <th className="px-3 py-2 text-right">Debit</th>
                 <th className="px-3 py-2 text-right">Credit</th>
-                {isAdmin && <th className="px-3 py-2 text-right">Actions</th>}
               </tr>
             </thead>
             <tbody aria-busy={loading}>
               {!loading && rows.map((r) => (
                 <tr key={r._id} className="border-b/50 hover:bg-slate-50/60">
                   <td className="px-3 py-2">
-                    {edit ? (
-                      <input
-                        type="date"
-                        className="rounded-md border px-2 py-1"
-                        value={dayjs(r.date).format('YYYY-MM-DD')}
-                        onChange={(e) => onCellChange(r._id, 'date', e.target.value)}
-                      />
-                    ) : (
-                      dayjs(r.date).format('DD/MM/YYYY')
-                    )}
+                    {dayjs(r.date).format('DD/MM/YYYY')}
                   </td>
                   <td className="px-3 py-2">
-                    {edit ? (
-                      <input
-                        className="rounded-md border px-2 py-1"
-                        value={r.voucherNo || ''}
-                        onChange={(e) => onCellChange(r._id, 'voucherNo', e.target.value)}
-                      />
-                    ) : (
-                      r.voucherNo || '—'
-                    )}
+                    {r.voucherNo || '—'}
                   </td>
                   <td className="px-3 py-2">
-                    {edit ? (
-                      <input
-                        className="w-full rounded-md border px-2 py-1"
-                        value={r.description || ''}
-                        onChange={(e) => onCellChange(r._id, 'description', e.target.value)}
-                      />
-                    ) : (
-                      r.description || ''
-                    )}
+                    {r.description || ''}
                   </td>
                   <td className="px-3 py-2 text-right">
                     {fmtMoney(rowTotal(r))}
                   </td>
                   <td className="px-3 py-2 text-right">
-                    {edit ? (
-                      <input
-                        type="number"
-                        className="rounded-md border px-2 py-1 text-right"
-                        value={r.debit ?? 0}
-                        onChange={(e) => onCellChange(r._id, 'debit', Number(e.target.value || 0))}
-                      />
-                    ) : (
-                      fmtMoney(Number(r.debit || 0))
-                    )}
+                    {fmtMoney(Number(r.debit || 0))}
                   </td>
                   <td className="px-3 py-2 text-right">
-                    {edit ? (
-                      <input
-                        type="number"
-                        className="rounded-md border px-2 py-1 text-right"
-                        value={r.credit ?? 0}
-                        onChange={(e) => onCellChange(r._id, 'credit', Number(e.target.value || 0))}
-                      />
-                    ) : (
-                      fmtMoney(Number(r.credit || 0))
-                    )}
+                    {fmtMoney(Number(r.credit || 0))}
                   </td>
-                  {isAdmin && (
-                    <td className="px-3 py-2 text-right">
-                      <button
-                        onClick={() => void deleteRow(r._id)}
-                        className="rounded-lg border border-red-200 px-3 py-1 text-red-600 hover:bg-red-50"
-                        title="Delete transaction (admin/superadmin)"
-                      >
-                        Delete
-                      </button>
-                    </td>
-                  )}
                 </tr>
               ))}
               {loading && (
                 <>
                   {Array.from({ length: 6 }).map((_, i) => (
                     <tr key={`skel-${i}`} className="animate-pulse border-b/50">
-                      {Array.from({ length: isAdmin ? 7 : 6 }).map((__, j) => (
+                      {Array.from({ length: 6 }).map((__, j) => (
                         <td key={`cell-${i}-${j}`} className="px-3 py-3">
                           <span className="inline-block h-3 w-full max-w-[140px] rounded bg-slate-200" />
                         </td>
@@ -737,7 +608,7 @@ export default function ReportsPage() {
               )}
               {!loading && rows.length === 0 && (
                 <tr>
-                  <td colSpan={isAdmin ? 7 : 6} className="px-3 py-10 text-center text-slate-500">
+                  <td colSpan={6} className="px-3 py-10 text-center text-slate-500">
                     No results. Try adjusting filters above.
                   </td>
                 </tr>

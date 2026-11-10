@@ -1,21 +1,24 @@
+import { amount, apiError, dateOnly, id, readBody, requirePermission } from '@/lib/api-security'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { dbConnect } from '@/lib/db'
 // ⬇⬇ use the default export
 import InventoryMovement from '@/models/InventoryMovement'
 
-const Row = z.object({
-  date: z.string().min(1),              // 'YYYY-MM-DD'
-  productId: z.string().min(1),
-  qty: z.number().nonnegative(),
-  avgCost: z.number().nonnegative().optional(), // allow blank -> 0
-  note: z.string().optional(),
+const Row = z.strictObject({
+  date: dateOnly,              // 'YYYY-MM-DD'
+  productId: id,
+  qty: amount,
+  avgCost: amount.optional(), // allow blank -> 0
+  note: z.string().max(500).optional(),
 })
 
 export async function POST(req: Request) {
+  const denied = await requirePermission('inventoryPost', req)
+  if (denied) return denied
   try {
-    const body = await req.json()
-    const parsed = z.object({ rows: z.array(Row).min(1) }).parse(body)
+    const parsed = await readBody(req, z.strictObject({ rows: z.array(Row).min(1).max(500) }))
+    if (!parsed) return apiError(400, 'Invalid inventory payload')
 
     await dbConnect()
 
@@ -37,8 +40,7 @@ export async function POST(req: Request) {
 
     const result = await InventoryMovement.insertMany(docs, { ordered: true })
     return NextResponse.json({ inserted: result.length })
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : 'Invalid payload'
-    return NextResponse.json({ error: msg }, { status: 400 })
+  } catch {
+    return apiError(500, 'Unable to save opening stock')
   }
 }

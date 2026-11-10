@@ -1,13 +1,8 @@
+import { amount, apiError, escapeRegex, readBody, requirePermission, text, validateQuery } from '@/lib/api-security'
+import { z } from 'zod'
 import { NextResponse } from 'next/server'
 import { dbConnect } from '@/lib/db'
 import { Account } from '@/models/Account'
-
-type ProductBody = {
-  name?: string
-  code?: string // SKU/Code
-  price?: number
-  unit?: string
-}
 
 type ProductDoc = {
   _id: unknown
@@ -17,6 +12,9 @@ type ProductDoc = {
 }
 
 export async function GET(req: Request) {
+  const denied = await requirePermission('read')
+  if (denied) return denied
+  if (!validateQuery(req)) return apiError(400, 'Invalid query')
   await dbConnect()
   const { searchParams } = new URL(req.url)
   const q = searchParams.get('q') ?? ''
@@ -24,7 +22,7 @@ export async function GET(req: Request) {
   const limit = Number.isFinite(limitParam) ? Math.min(Math.max(1, limitParam), 300) : 300
 
   const match: Record<string, unknown> = { type: 'product' }
-  if (q) match.name = { $regex: q, $options: 'i' }
+  if (q) match.name = { $regex: escapeRegex(q), $options: 'i' }
 
   // Cast through unknown to avoid 'any'
   const docs = (await Account.find(match)
@@ -49,13 +47,13 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  const denied = await requirePermission('configure', req)
+  if (denied) return denied
   await dbConnect()
-  let body: ProductBody
-  try {
-    body = (await req.json()) as ProductBody
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
-  }
+  const body = await readBody(req, z.strictObject({
+    name: text.min(1), code: text.optional(), price: amount.optional(), unit: text.optional(),
+  }))
+  if (!body) return apiError(400, 'Invalid product payload')
 
   const name = body.name?.trim()
   const code = body.code?.trim()

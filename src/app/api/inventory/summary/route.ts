@@ -1,3 +1,4 @@
+import { apiError, requirePermission, validateQuery } from '@/lib/api-security'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { dbConnect } from '@/lib/db'
@@ -11,6 +12,9 @@ const Query = z.object({
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: Request) {
+  const denied = await requirePermission('read')
+  if (denied) return denied
+  if (!validateQuery(req)) return apiError(400, 'Invalid query')
   await dbConnect()
   const { searchParams } = new URL(req.url)
   const parsed = Query.safeParse({ productId: searchParams.get('productId') })

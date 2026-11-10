@@ -1,3 +1,4 @@
+import { requirePermission } from '@/lib/api-security'
 // src/app/api/categories/[id]/route.ts
 import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
@@ -6,6 +7,8 @@ import { dbConnect } from '@/lib/db'
 import { LedgerCategory } from '@/models/LedgerCategory'
 
 export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const denied = await requirePermission('configure', _req)
+  if (denied) return denied
   await dbConnect()
   const { id } = await ctx.params
 

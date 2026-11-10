@@ -1,3 +1,4 @@
+import { apiError, escapeRegex, requirePermission, validateQuery } from '@/lib/api-security'
 import { NextResponse } from 'next/server'
 import mongoose from 'mongoose'
 import { dbConnect } from '@/lib/db'
@@ -32,6 +33,9 @@ type RowOut = {
 }
 
 export async function GET(req: Request) {
+  const denied = await requirePermission('read')
+  if (denied) return denied
+  if (!validateQuery(req)) return apiError(400, 'Invalid query')
   await dbConnect()
   const { searchParams } = new URL(req.url)
 
@@ -50,8 +54,8 @@ export async function GET(req: Request) {
   if (q) {
     and.push({
       $or: [
-        { description: { $regex: q, $options: 'i' } },
-        { voucherNo:   { $regex: q, $options: 'i' } },
+        { description: { $regex: escapeRegex(q), $options: 'i' } },
+        { voucherNo:   { $regex: escapeRegex(q), $options: 'i' } },
       ],
     })
   }
@@ -59,7 +63,11 @@ export async function GET(req: Request) {
   if (from || to) {
     const dateCond: Record<string, unknown> = {}
     if (from) dateCond.$gte = new Date(from)
-    if (to)   dateCond.$lte = new Date(to)
+    if (to) {
+      const end = new Date(to)
+      end.setUTCDate(end.getUTCDate() + 1)
+      dateCond.$lt = end
+    }
     and.push({ date: dateCond })
   }
 

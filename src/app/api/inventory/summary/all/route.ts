@@ -1,3 +1,4 @@
+import { requirePermission } from '@/lib/api-security'
 import { NextResponse } from 'next/server'
 import { dbConnect } from '@/lib/db'
 import InventoryMovement from '@/models/InventoryMovement'
@@ -9,6 +10,8 @@ export const dynamic = 'force-dynamic'
 type NameDoc = { _id: unknown; name: string }
 
 export async function GET() {
+  const denied = await requirePermission('read')
+  if (denied) return denied
   await dbConnect()
 
   // distinct product ids present in movements

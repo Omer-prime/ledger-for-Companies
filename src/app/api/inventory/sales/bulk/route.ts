@@ -1,33 +1,33 @@
+import { amount, apiError, dateOnly, id, readBody, requirePermission } from '@/lib/api-security'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { dbConnect } from '@/lib/db'
 import InventoryMovement, { isObjectId } from '@/models/InventoryMovement'
 
-const Row = z.object({
+const Row = z.strictObject({
   type: z.literal('sale'),
-  date: z.string().min(8),
-  partyId: z.string().optional(),
-  productId: z.string().refine(isObjectId, 'Invalid productId'),
-  qty: z.number().positive(),
-  sellRate: z.number().nonnegative().optional(),
-  meta: z.record(z.string(), z.unknown()).optional(), // <-- key + value types
+  date: dateOnly,
+  partyId: id.optional(),
+  productId: id,
+  qty: amount.gt(0),
+  sellRate: amount.optional(),
+  meta: z.strictObject({ price: amount.optional(), stockAfter: z.number().min(-1e12).max(1e12).optional(), totalValueAfter: amount.optional(), avgCostAfter: amount.optional(), revenue: amount.optional(), cogs: amount.optional() }).optional(),
 })
 
-const Body = z.object({
-  rows: z.array(Row).min(1),
+const Body = z.strictObject({
+  rows: z.array(Row).min(1).max(500),
 })
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: Request) {
+  const denied = await requirePermission('inventoryPost', req)
+  if (denied) return denied
   await dbConnect()
-  const json = await req.json().catch(() => null)
-  const parsed = Body.safeParse(json)
-  if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
-  }
+  const rows = await readBody(req, Body)
+  if (!rows) return apiError(400, 'Invalid inventory payload')
 
-  const docs = parsed.data.rows.map((r) => ({
+  const docs = rows.rows.map((r) => ({
     type: 'sale' as const,
     date: new Date(r.date),
     partyId: r.partyId,

@@ -1,3 +1,4 @@
+import { apiError, requirePermission, validateQuery } from '@/lib/api-security'
 import { NextRequest, NextResponse } from 'next/server'
 import { dbConnect } from '@/lib/db'
 import { Account } from '@/models/Account'
@@ -15,6 +16,9 @@ type BankLean = {
 }
 
 export async function GET(req: NextRequest) {
+  const denied = await requirePermission('read')
+  if (denied) return denied
+  if (!validateQuery(req)) return apiError(400, 'Invalid query')
   await dbConnect()
 
   const { searchParams } = new URL(req.url)

@@ -1,3 +1,5 @@
+import { amount, apiError, dateOnly, id, readBody, requirePermission, text, validateQuery } from '@/lib/api-security'
+import { z } from 'zod'
 import { NextResponse } from 'next/server'
 import { dbConnect } from '@/lib/db'
 import { Transaction, type ITransaction } from '@/models/Transaction'
@@ -12,6 +14,9 @@ type TxPre  = Pick<ITransaction, 'date' | 'debit' | 'credit'>
 type TxLite = Pick<ITransaction, 'date' | 'debit' | 'credit' | 'description' | 'voucherNo' | 'meta'>
 
 export async function GET(req: Request) {
+  const denied = await requirePermission('read')
+  if (denied) return denied
+  if (!validateQuery(req)) return apiError(400, 'Invalid query')
   await dbConnect()
   const { searchParams } = new URL(req.url)
   const accountId = searchParams.get('accountId') ?? ''
@@ -30,6 +35,7 @@ export async function GET(req: Request) {
 
   const fromDate = from ? new Date(from) : null
   const toDate = to ? new Date(to) : null
+  if (toDate) toDate.setUTCDate(toDate.getUTCDate() + 1)
 
   // Opening = signed openingBalance + all tx before "from"
   const signedOpening = Number(acc.openingBalance || 0) * (acc.openingIsDebit ? 1 : -1)
@@ -37,7 +43,7 @@ export async function GET(req: Request) {
   const preMatch: Record<string, unknown> = { account: new mongoose.Types.ObjectId(accountId) }
   if (fromDate) preMatch.date = { $lt: fromDate }
 
-  const preRows = await Transaction.find(preMatch, { debit: 1, credit: 1, date: 1 })
+  const preRows = !fromDate ? [] : await Transaction.find(preMatch, { debit: 1, credit: 1, date: 1 })
     .sort({ date: 1, _id: 1 })
     .lean<TxPre[]>()
 
@@ -49,7 +55,7 @@ export async function GET(req: Request) {
   if (fromDate || toDate) {
     const dateCond: Record<string, unknown> = {}
     if (fromDate) dateCond.$gte = fromDate
-    if (toDate) dateCond.$lte = toDate
+    if (toDate) dateCond.$lt = toDate
     rangeMatch.date = dateCond
   }
 
@@ -67,16 +73,14 @@ export async function GET(req: Request) {
 
 // keep your POST as-is (creating a single transaction)
 export async function POST(req: Request) {
+  const denied = await requirePermission('post', req)
+  if (denied) return denied
   await dbConnect()
-  const body: {
-    accountId?: string
-    date?: string
-    voucherNo?: string
-    description?: string
-    debit?: number
-    credit?: number
-    categoryId?: string
-  } = await req.json()
+  const body = await readBody(req, z.strictObject({
+    accountId: id.optional(), categoryId: id.optional(), date: dateOnly.optional(),
+    voucherNo: text.optional(), description: text.optional(), debit: amount.optional(), credit: amount.optional(),
+  }))
+  if (!body) return apiError(400, 'Invalid transaction payload')
 
   const { accountId, date, voucherNo, description, debit, credit, categoryId } = body
 
@@ -85,6 +89,7 @@ export async function POST(req: Request) {
       ? await Account.findById(accountId)
       : null
 
+  if (accountId && !acc) return apiError(400, 'Unknown account')
   if (!acc) {
     acc =
       (await Account.findOne({ name: 'Unassigned', type: 'gl' })) ||

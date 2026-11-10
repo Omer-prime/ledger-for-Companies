@@ -1,36 +1,35 @@
+import { amount, apiError, dateOnly, id, readBody, requirePermission } from '@/lib/api-security'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { dbConnect } from '@/lib/db'
-import { InventoryMovement, isObjectId } from '@/models/InventoryMovement'
+import { InventoryMovement } from '@/models/InventoryMovement'
 
-const Row = z.object({
+const Row = z.strictObject({
   type: z.literal('purchase'),
-  date: z.string().min(8),
-  partyId: z.string().optional(),
-  productId: z.string().refine(isObjectId, 'Invalid productId'),
-  rate: z.number().nonnegative(),
-  qty: z.number().nonnegative(),
-  waste: z.number().nonnegative().optional(),
-  // NOTE: zod v4 classic requires the key type too:
-  meta: z.record(z.string(), z.unknown()).optional(),
-})
+  date: dateOnly,
+  partyId: id.optional(),
+  productId: id,
+  rate: amount,
+  qty: amount.gt(0),
+  waste: amount.optional(),
+  meta: z.strictObject({ price: amount.optional(), stockAfter: z.number().min(-1e12).max(1e12).optional(), totalValueAfter: amount.optional(), avgCostAfter: amount.optional(), revenue: amount.optional(), cogs: amount.optional() }).optional(),
+}).refine(row => (row.waste ?? 0) <= row.qty)
 
-const Body = z.object({
-  rows: z.array(Row).min(1),
+const Body = z.strictObject({
+  rows: z.array(Row).min(1).max(500),
 })
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: Request) {
+  const denied = await requirePermission('inventoryPost', req)
+  if (denied) return denied
   await dbConnect()
-  const json = await req.json().catch(() => null)
-  const parsed = Body.safeParse(json)
-  if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
-  }
+  const rows = await readBody(req, Body)
+  if (!rows) return apiError(400, 'Invalid inventory payload')
 
   const docs: Array<Record<string, unknown>> = []
-  for (const r of parsed.data.rows) {
+  for (const r of rows.rows) {
     const base = {
       type: 'purchase' as const,
       date: new Date(r.date),

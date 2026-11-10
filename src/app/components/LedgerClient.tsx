@@ -108,21 +108,6 @@ export default function LedgerClient() {
     setTo(last.toISOString().slice(0, 10))
   }
 
-  // Delete a single transaction and refresh
-  async function handleDelete(id: string) {
-    try {
-      const res = await fetch(`/api/transactions/${id}`, { method: 'DELETE' })
-      if (!res.ok) {
-        console.error('Delete failed', await res.text())
-        return
-      }
-      // re-load so running balances + totals recompute correctly
-      await load()
-    } catch (err) {
-      console.error('Delete error', err)
-    }
-  }
-
   return (
     <section className="space-y-4">
       <div className="rounded-2xl bg-white p-4 shadow-soft no-print">
@@ -197,7 +182,6 @@ export default function LedgerClient() {
               rows={data.rows}
               totals={data.totals.items}
               period={period}
-              onDelete={handleDelete} // 🚀 enable delete buttons
             />
             <div className="only-print print-footer">{FACTORY_NAME}</div>
           </div>

@@ -1,3 +1,4 @@
+import { apiError, named, readBody, requirePermission, validateQuery } from '@/lib/api-security'
 import { NextRequest, NextResponse } from 'next/server'
 import { dbConnect } from '@/lib/db'
 import { Account } from '@/models/Account'
@@ -9,6 +10,9 @@ function escapeRegex(s: string) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
 type PartyRow = { _id: unknown; name: string; code?: string }
 
 export async function GET(req: NextRequest) {
+  const denied = await requirePermission('read')
+  if (denied) return denied
+  if (!validateQuery(req)) return apiError(400, 'Invalid query')
   await dbConnect()
   const { searchParams } = new URL(req.url)
   const q = (searchParams.get('q') || '').trim()
@@ -28,8 +32,11 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const denied = await requirePermission('configure', req)
+  if (denied) return denied
   await dbConnect()
-  const body = (await req.json().catch(() => null)) as { name?: string; code?: string } | null
+  const body = await readBody(req, named)
+  if (!body) return apiError(400, 'Invalid payload')
   const name = body?.name?.trim()
   const code = body?.code?.trim()
   if (!name) return NextResponse.json({ error: 'name required' }, { status: 400 })
