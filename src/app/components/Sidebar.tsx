@@ -17,6 +17,7 @@ const items = [
   { href: '/admin/purchases', label: 'Purchases' },
   { href: '/admin/sales', label: 'Sales' },
   { href: '/admin/inventory', label: 'Inventory' },
+  { href: '/admin/warehouse', label: 'Warehouse' },
   { href: '/admin/business-settings', label: 'Business settings', configureOnly: true },
 ]
 
