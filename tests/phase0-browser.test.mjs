@@ -140,12 +140,81 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
     await page.getByRole('button', { name: 'Record dyeing return' }).click()
     await page.getByLabel('Dyeing job reference').waitFor()
     if (warehouseScreenshots) await page.screenshot({ path: warehouseScreenshots + '/warehouse-mobile.png', fullPage: true })
-    await page.getByLabel('Document reference').fill('BROWSER-RETURN-10')
-    await page.getByLabel('Dyeing job reference').fill('DYE-300')
-    await page.getByLabel('dyed length', { exact: true }).fill('10')
-    await page.getByRole('button', { name: 'Post document', exact: true }).click()
-    await page.getByText('Warehouse document posted.', { exact: true }).waitFor()
+    const warehouseReference = page.getByLabel('Document reference')
+    const warehouseJob = page.getByLabel('Dyeing job reference')
+    const dyedLength = page.getByLabel('dyed length', { exact: true })
+    const postDocument = page.getByRole('button', { name: 'Post document', exact: true })
+    await warehouseReference.fill('BROWSER-RETURN-10')
+    await warehouseJob.fill('DYE-300')
+    await dyedLength.fill('121')
+    await postDocument.click()
+    await page.getByText('Return exceeds outstanding fabric', { exact: true }).waitFor()
+    assert.equal(await warehouseReference.inputValue(), 'BROWSER-RETURN-10')
+    assert.equal(await warehouseJob.inputValue(), 'DYE-300')
+    assert.equal(await dyedLength.inputValue(), '121')
+
+    await dyedLength.fill('10')
+    let posts = 0
+    const interceptWarehouse = async route => {
+      if (route.request().method() === 'GET' && posts === 2) {
+        await route.fulfill({ status: 503 })
+        return
+      }
+      if (route.request().method() === 'POST') {
+        posts++
+        if (posts === 1) {
+          const committed = await route.fetch()
+          assert.equal(committed.status(), 201)
+          await route.abort()
+          return
+        }
+        const replay = await route.fetch()
+        assert.equal(replay.status(), 200)
+        await route.fulfill({ response: replay })
+        return
+      }
+      await route.continue()
+    }
+    await page.route('**/api/warehouse', interceptWarehouse)
+    await postDocument.evaluate(button => {
+      button.click()
+      button.click()
+    })
+    await page.getByText('Posting could not be confirmed. Retry with the same document reference and values.', { exact: true }).waitFor()
+    assert.equal(posts, 1)
+    assert.equal(await warehouseReference.inputValue(), 'BROWSER-RETURN-10')
+    assert.equal(await warehouseJob.inputValue(), 'DYE-300')
+    assert.equal(await dyedLength.inputValue(), '10')
+
+    await postDocument.click()
+    await page.getByText('Document posted successfully, but warehouse data could not be refreshed.', { exact: true }).waitFor()
+    assert.equal(posts, 2)
+    assert.equal(await warehouseReference.inputValue(), '')
+    await page.unroute('**/api/warehouse', interceptWarehouse)
+
+    await warehouseReference.fill('BROWSER-RETURN-10')
+    await warehouseJob.fill('DYE-300')
+    await dyedLength.fill('10')
+    await postDocument.click()
+    await page.getByText('This document was already posted.', { exact: true }).waitFor()
     await page.getByText(/110 m outstanding/).waitFor()
+    const failRefresh = route => route.request().method() === 'GET'
+      ? route.fulfill({ status: 503 })
+      : route.continue()
+    await page.route('**/api/warehouse', failRefresh)
+    await warehouseReference.fill('BROWSER-RETURN-NEW')
+    await warehouseJob.fill('DYE-300')
+    await dyedLength.fill('1')
+    await postDocument.click()
+    await page.getByText('Document posted successfully, but warehouse data could not be refreshed.', { exact: true }).waitFor()
+    assert.equal(await warehouseReference.inputValue(), '')
+    await page.unroute('**/api/warehouse', failRefresh)
+    const outstanding = await page.evaluate(async () => {
+      const data = await (await fetch('/api/warehouse')).json()
+      return data.jobs.find(job => job._id === 'DYE-300').outstandingUm
+    })
+    assert.equal(outstanding, 109000000)
+
     await page.setViewportSize({ width: 1280, height: 720 })
     await page.goto(origin + '/admin/inventory')
     const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Download PDF' }).click()])

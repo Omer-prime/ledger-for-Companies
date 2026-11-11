@@ -122,16 +122,22 @@ test('Phase 0 HTTP and replica-set acceptance rehearsal', async () => {
     assert.equal((await postWarehouse(receipt, { requestOrigin: 'https://unrelated.example.test' })).status, 403)
     assert.equal((await postWarehouse({ ...receipt, unit: 'yd', quantity: '0.000001' })).status, 400)
     assert.equal((await postWarehouse(receipt)).status, 201)
-    assert.equal((await postWarehouse(receipt)).status, 200)
+    const receiptReplay = await postWarehouse(receipt)
+    assert.equal(receiptReplay.status, 200)
+    assert.deepEqual(await receiptReplay.json(), { eventId: receipt.kind + ':' + receipt.reference, replayed: true })
     const dispatch = { kind: 'dispatch', reference: 'DYE-300', processorId: party, lotId: receipt.reference, unit, quantity: '300' }
     assert.equal((await postWarehouse(dispatch)).status, 201)
-    assert.equal((await postWarehouse(dispatch)).status, 200)
+    const dispatchReplay = await postWarehouse(dispatch)
+    assert.equal(dispatchReplay.status, 200)
+    assert.deepEqual(await dispatchReplay.json(), { eventId: dispatch.kind + ':' + dispatch.reference, replayed: true })
     assert.equal((await postWarehouse({ ...dispatch, quantity: '299' })).status, 409)
     const warehouseLots = db.collection('warehouse_lots')
     assert.equal((await warehouseLots.findOne({ _id: receipt.reference })).balances.greige, 200000000)
     const returned = { kind: 'return', reference: 'RETURN-180', jobId: dispatch.reference, unit, dyed: '180', damaged: '0', rejected: '0', lost: '0' }
     assert.equal((await postWarehouse(returned)).status, 201)
-    assert.equal((await postWarehouse(returned)).status, 200)
+    const returnedReplay = await postWarehouse(returned)
+    assert.equal(returnedReplay.status, 200)
+    assert.deepEqual(await returnedReplay.json(), { eventId: returned.kind + ':' + returned.reference, replayed: true })
     assert.equal((await postWarehouse({ ...returned, dyed: '181' })).status, 409)
     assert.equal((await postWarehouse({ ...returned, reference: 'TOO-MUCH', dyed: '121' })).status, 409)
     assert.equal((await db.collection('warehouse_dye_jobs').findOne({ _id: dispatch.reference })).outstandingUm, 120000000)
@@ -145,6 +151,32 @@ test('Phase 0 HTTP and replica-set acceptance rehearsal', async () => {
     assert.deepEqual(concurrentReturns.map(result => result.status).sort(), [201, 409])
     assert.equal((await postWarehouse({ ...returned, reference: 'RETURN-EXCEPTIONS', jobId: winningJob,
       dyed: '40', damaged: '4', rejected: '3', lost: '3', reason: 'Fixture quality inspection' })).status, 201)
+
+    const warehouseEvents = db.collection('warehouse_movements')
+    const warehouseJobs = db.collection('warehouse_dye_jobs')
+    const beforeRejectedWrites = {
+      lots: await warehouseLots.find().sort({ _id: 1 }).toArray(),
+      jobs: await warehouseJobs.find().sort({ _id: 1 }).toArray(),
+      events: await warehouseEvents.countDocuments(),
+    }
+    const rollbackCommands = [
+      { ...receipt, reference: 'ROLLBACK-RECEIPT' },
+      { ...dispatch, reference: 'ROLLBACK-DISPATCH', quantity: '1' },
+      { ...returned, reference: 'ROLLBACK-RETURN', dyed: '1' },
+    ]
+    // Reject the last write after each operation has already changed balances inside its transaction.
+    await db.command({
+      collMod: 'warehouse_movements',
+      validator: { _id: { $nin: rollbackCommands.map(body => body.kind + ':' + body.reference) } },
+    })
+    try {
+      for (const body of rollbackCommands) assert.equal((await postWarehouse(body)).status, 503)
+    } finally {
+      await db.command({ collMod: 'warehouse_movements', validator: {} })
+    }
+    assert.deepEqual(await warehouseLots.find().sort({ _id: 1 }).toArray(), beforeRejectedWrites.lots)
+    assert.deepEqual(await warehouseJobs.find().sort({ _id: 1 }).toArray(), beforeRejectedWrites.jobs)
+    assert.equal(await warehouseEvents.countDocuments(), beforeRejectedWrites.events)
 
     const lotBefore = await warehouseLots.findOne({ _id: receipt.reference })
     assert.equal((await put(2, { ...next, measurements: { ...next.measurements, lengthUnit: 'yd' }, localization: { ...next.localization, currency: 'USD' } })).status, 200)
@@ -162,6 +194,8 @@ test('Phase 0 HTTP and replica-set acceptance rehearsal', async () => {
       }
     }
     assert.deepEqual(reconciled, lotBefore.balances)
+    assert.deepEqual(Object.fromEntries(warehouseData.balances.map(balance => [balance._id.stage, Number(balance.um)])), reconciled)
+    assert.equal(warehouseData.jobs.reduce((sum, job) => sum + job.outstandingUm, 0), reconciled.processor)
     assert.equal(Object.values(reconciled).reduce((sum, um) => sum + um, 0), 500000000)
     assert.deepEqual(await transactions.findOne({ _id: legacyRow._id }), legacyRow)
 
