@@ -12,6 +12,7 @@ export type CuttingOrder = {
   createdAt: Date
   completion?: {
     batchId: string
+    suitLengthUm: number
     suits: number
     quarantined: number
     returnedUm: number

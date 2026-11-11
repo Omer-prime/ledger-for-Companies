@@ -16,7 +16,7 @@ const fields = { reference, orderId: reference }
 const commands = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('allocate'), reference, lotId: reference, length: meters, suitLength: meters.optional() }),
   z.strictObject({ kind: z.literal('complete'), ...fields, suits: quantity, quarantined: quantity,
-    returned: meters, offcuts: meters, waste: meters }),
+    returned: meters, offcuts: meters, waste: meters, actualSuitLength: meters.optional() }),
   z.strictObject({ kind: z.literal('grade'), ...fields, grade, suits: quantity.min(1) }),
   z.strictObject({ kind: z.literal('regrade'), ...fields, from: grade, grade, suits: quantity.min(1), reason: text.min(1) }),
   z.strictObject({ kind: z.literal('pack'), ...fields, targetSuits: quantity.min(1).max(1000).optional(),
@@ -112,9 +112,11 @@ export const POST = safeApi(async function POST(req: Request) {
         lotId = order.lotId
         if (body.kind === 'complete') {
           if (order.completion) throw new PostingError(409, 'Cutting order already completed')
+          const suitLengthUm = body.actualSuitLength ?? order.suitLengthUm
+          if (!suitLengthUm || suitLengthUm > 10000000000) throw new PostingError(400, 'Enter an actual suit length up to 10,000 m')
           let consumedUm: number
           try {
-            consumedUm = reconcileCutting(order.allocatedUm, order.suitLengthUm, body.suits, body.quarantined, body.returned, body.offcuts, body.waste)
+            consumedUm = reconcileCutting(order.allocatedUm, suitLengthUm, body.suits, body.quarantined, body.returned, body.offcuts, body.waste)
           } catch (error) {
             throw new PostingError(400, (error as Error).message)
           }
@@ -123,11 +125,11 @@ export const POST = safeApi(async function POST(req: Request) {
             if (!returned.matchedCount) throw new PostingError(409, 'Source lot requires reconciliation')
           }
           order.completion = {
-            batchId: body.reference, suits: body.suits, quarantined: body.quarantined, returnedUm: body.returned,
+            batchId: body.reference, suitLengthUm, suits: body.suits, quarantined: body.quarantined, returnedUm: body.returned,
             offcutsUm: body.offcuts, wasteUm: body.waste, consumedUm,
           }
           order.unclassified = body.suits
-          document = { ...body, ...order.completion, suitLengthUm: order.suitLengthUm }
+          document = { ...body, ...order.completion }
         } else {
           if (!order.completion) throw new PostingError(409, 'Complete cutting before grading or packing')
           if (body.kind === 'grade' || body.kind === 'regrade') {
@@ -160,12 +162,14 @@ export const POST = safeApi(async function POST(req: Request) {
               stock.packed += item.suits
               return { ...item, label: stock.label }
             })
-            document = { ...body, contents, targetSuits, suits, suitLengthUm: order.suitLengthUm, totalUm: order.suitLengthUm * suits }
+            const suitLengthUm = order.completion.suitLengthUm
+            const totalUm = suitLengthUm * suits
+            document = { ...body, contents, targetSuits, suits, suitLengthUm, totalUm }
             await thaans.insertOne({
               _id: body.reference, orderId, batchId: order.completion.batchId, lotId, contents, suits, targetSuits,
               defaultTargetSuits: configuration.thaan.suitsPerThaan,
               defaultSuitLengthUm: Math.round(configuration.thaan.metersPerSuit * LENGTH_UNITS_UM.m),
-              suitLengthUm: order.suitLengthUm, totalUm: order.suitLengthUm * suits, revision, actor: actor.email, postedAt,
+              suitLengthUm, totalUm, revision, actor: actor.email, postedAt,
             }, { session })
           }
         }

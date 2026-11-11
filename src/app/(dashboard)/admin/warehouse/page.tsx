@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 
 type Kind = 'receipt' | 'dispatch' | 'return'
@@ -85,12 +86,13 @@ export default function WarehousePage() {
         <p className="text-xs font-semibold tracking-widest text-blue-200 uppercase">OarLinks / Operations</p>
         <h1 className="mt-2 text-3xl font-semibold">Warehouse</h1>
         <p className="mt-2 text-sm text-slate-300">Trace greige lots from supplier receipt through dyeing and return.</p>
+        <Link href="/admin/warehouse/production" className="mt-4 inline-block rounded-lg bg-white px-3 py-2 text-sm font-semibold text-slate-900">Cutting and finished inventory</Link>
       </header>
       <p role="status" className="text-sm text-slate-700">{notice || (!data && 'Loading warehouse...')}</p>
       {data && <>
         <section aria-label="Warehouse totals" className="grid grid-cols-2 gap-3 xl:grid-cols-4">
           {[['Greige available', meters(total('greige'))], ['With processors', meters(total('processor'))],
-            ['Dyed returned', meters(total('dyed'))], ['Outstanding jobs', String(data.outstandingJobs)]].map(([label, value]) => (
+            ['Dyed available', meters(total('dyed'))], ['Outstanding jobs', String(data.outstandingJobs)]].map(([label, value]) => (
             <div key={label} className={card}><p className="text-xs text-slate-600">{label}</p><p className="mt-1 text-xl font-semibold">{value}</p></div>
           ))}
         </section>
