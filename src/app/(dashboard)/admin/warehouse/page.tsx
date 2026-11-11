@@ -53,13 +53,22 @@ export default function WarehousePage() {
       const response = await fetch('/api/warehouse', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       })
-      const result = await response.json()
-      if (!response.ok) throw new Error(result.error ?? 'Posting failed.')
+      if (response.status !== 200 && response.status !== 201) {
+        if (response.status >= 400 && response.status < 500) {
+          const result = await response.json().catch(() => null)
+          setNotice(result?.error ?? 'Warehouse document was rejected. Check the fields and retry.')
+          return
+        }
+        throw new Error('Posting confirmation unavailable')
+      }
+
       form.reset()
-      setNotice(result.replayed ? 'This document was already posted.' : 'Warehouse document posted.')
-      await refresh()
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Posting failed. Retry with the same reference.')
+      setNotice(response.status === 200 ? 'This document was already posted.' : 'Warehouse document posted.')
+      await refresh().catch(() => {
+        setNotice('Document posted successfully, but warehouse data could not be refreshed.')
+      })
+    } catch {
+      setNotice('Posting could not be confirmed. Retry with the same document reference and values.')
     } finally {
       lock.current = false
       setSaving(false)
