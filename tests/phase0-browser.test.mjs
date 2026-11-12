@@ -218,7 +218,7 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
     await page.setViewportSize({ width: 1280, height: 720 })
     await page.getByRole('link', { name: 'Cutting and finished inventory' }).click()
     await page.getByRole('heading', { name: 'Finished inventory', exact: true }).waitFor()
-    await page.getByText('THAAN-MIXED', { exact: true }).waitFor()
+    await page.getByText('THAAN-C1', { exact: true }).waitFor()
     const productionScreenshots = process.env.PHASE2B_SCREENSHOTS
     if (productionScreenshots) await page.screenshot({ path: productionScreenshots + '/production-desktop.png', fullPage: true })
     await page.setViewportSize({ width: 390, height: 844 })
@@ -246,6 +246,9 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
     await page.getByLabel('Suit count').fill('1')
     await submitProduction()
     await selectAction('Pack thaan')
+    await page.getByText('Standard thaan: 4 suits of one grade.', { exact: true }).waitFor()
+    assert.equal(await page.locator('input[name=targetSuits]').count(), 0)
+    assert.equal(await page.getByLabel('Packed grade').count(), 1)
     await page.getByLabel('Thaan number').fill('MOBILE-THAAN')
     await page.getByLabel('Cutting order reference').fill('MOBILE-CUT')
     await page.getByLabel('Packed grade').fill('A')
