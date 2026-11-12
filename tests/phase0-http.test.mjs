@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
@@ -197,6 +198,121 @@ test('Phase 0 HTTP and replica-set acceptance rehearsal', async () => {
     assert.deepEqual(Object.fromEntries(warehouseData.balances.map(balance => [balance._id.stage, Number(balance.um)])), reconciled)
     assert.equal(warehouseData.jobs.reduce((sum, job) => sum + job.outstandingUm, 0), reconciled.processor)
     assert.equal(Object.values(reconciled).reduce((sum, um) => sum + um, 0), 500000000)
+
+    const productionLot = 'PRODUCTION-LOT-180'
+    assert.equal((await postWarehouse({ ...receipt, reference: productionLot, quantity: '180' })).status, 201)
+    assert.equal((await postWarehouse({ ...dispatch, reference: 'PRODUCTION-DYE', lotId: productionLot, quantity: '180' })).status, 201)
+    assert.equal((await postWarehouse({ ...returned, reference: 'PRODUCTION-DYED', jobId: 'PRODUCTION-DYE' })).status, 201)
+    const production = (body, options = {}) => request('textile-production', { method: 'POST', cookie, body, ...options })
+    const allocation = { kind: 'allocate', reference: 'CUT-A', lotId: productionLot, length: '180' }
+    assert.equal((await request('textile-production')).status, 401)
+    assert.equal((await production(allocation, { cookie: memberCookie })).status, 403)
+    const cutting = db.collection('textile_cutting_orders')
+    const packages = db.collection('textile_thaans')
+    const movements = db.collection('textile_production_movements')
+    const allocations = await Promise.all([allocation, { ...allocation, reference: 'CUT-B' }].map(body => production(body)))
+    assert.deepEqual(allocations.map(result => result.status).sort(), [201, 409])
+    const orderId = allocations[0].status === 201 ? 'CUT-A' : 'CUT-B'
+    assert.equal((await production({ ...allocation, reference: orderId })).status, 200)
+    assert.equal((await production({ ...allocation, reference: 'OVER-ALLOCATE', length: '1' })).status, 409)
+    assert.equal((await warehouseLots.findOne({ _id: productionLot })).balances.dyed, 0)
+    const completion = { kind: 'complete', reference: 'BATCH-29', orderId, suits: 29, quarantined: 0, returned: '0', offcuts: '0', waste: '6' }
+    const beforeCompletion = await cutting.findOne({ _id: orderId })
+    const beforeFailedAllocation = await warehouseLots.findOne({ _id: receipt.reference })
+    await db.command({
+      collMod: 'textile_production_movements',
+      validator: { _id: { $nin: ['allocate:ROLLBACK-CUT', 'complete:ROLLBACK-BATCH'] } },
+    })
+    try {
+      assert.equal((await production({ ...allocation, reference: 'ROLLBACK-CUT', lotId: receipt.reference, length: '1' })).status, 503)
+      assert.equal((await production({ ...completion, reference: 'ROLLBACK-BATCH', suits: 28, returned: '6' })).status, 503)
+    } finally {
+      await db.command({ collMod: 'textile_production_movements', validator: {} })
+    }
+    assert.deepEqual(await warehouseLots.findOne({ _id: receipt.reference }), beforeFailedAllocation)
+    assert.equal(await cutting.findOne({ _id: 'ROLLBACK-CUT' }), null)
+    assert.deepEqual(await cutting.findOne({ _id: orderId }), beforeCompletion)
+    assert.equal((await warehouseLots.findOne({ _id: productionLot })).balances.dyed, 0)
+    assert.equal((await production({ ...completion, waste: '5' })).status, 400)
+    assert.equal((await production(completion)).status, 201)
+    assert.equal((await production(completion)).status, 200)
+    assert.equal((await cutting.findOne({ _id: orderId })).completion.consumedUm, 180000000)
+    assert.equal((await cutting.findOne({ _id: orderId })).unclassified, 29)
+
+    for (const [grade, suits] of [['A', 16], ['B', 9], ['C', 4]]) {
+      const body = { kind: 'grade', reference: 'GRADE-' + grade, orderId, grade, suits }
+      assert.equal((await production(body)).status, 201)
+      assert.equal((await production(body)).status, 200)
+    }
+    assert.equal((await production({ kind: 'grade', reference: 'OVER-GRADE', orderId, grade: 'A', suits: 1 })).status, 409)
+    const latest = await (await request(settingsPath, { cookie })).json()
+    latest.settings.grades = latest.settings.grades.map(grade => grade.code === 'B' ? { ...grade, label: 'Renamed', enabled: false } : grade)
+    latest.settings.grades.push({ code: 'D', label: 'Special', enabled: true })
+    latest.settings.thaan.metersPerSuit = 5
+    assert.equal((await put(latest.revision, latest.settings)).status, 200)
+    assert.equal((await production({ kind: 'grade', reference: 'DISABLED-B', orderId, grade: 'B', suits: 1 })).status, 400)
+    const correction = { kind: 'regrade', reference: 'TO-D', orderId, from: 'A', grade: 'D', suits: 1, reason: 'Fixture inspection' }
+    assert.equal((await production(correction)).status, 201)
+    assert.equal((await production({ ...correction, reference: 'BACK-TO-A', from: 'D', grade: 'A' })).status, 201)
+
+    const pack = (reference, contents, options = {}) => production({ kind: 'pack', reference, orderId, contents, ...options })
+    const beforeRollback = await cutting.findOne({ _id: orderId })
+    await db.command({ collMod: 'textile_production_movements', validator: { _id: { $ne: 'pack:ROLLBACK-THAAN' } } })
+    try {
+      assert.equal((await pack('ROLLBACK-THAAN', [{ grade: 'A', suits: 4 }])).status, 503)
+    } finally {
+      await db.command({ collMod: 'textile_production_movements', validator: {} })
+    }
+    assert.deepEqual(await cutting.findOne({ _id: orderId }), beforeRollback)
+    assert.equal(await packages.countDocuments(), 0)
+    assert.equal(await movements.countDocuments({ _id: 'pack:ROLLBACK-THAAN' }), 0)
+
+    for (let index = 1; index <= 4; index++) assert.equal((await pack('THAAN-A' + index, [{ grade: 'A', suits: 4 }])).status, 201)
+    for (let index = 1; index <= 2; index++) assert.equal((await pack('THAAN-B' + index, [{ grade: 'B', suits: 4 }])).status, 201)
+    const beforePolicyRejections = await cutting.findOne({ _id: orderId })
+    assert.equal((await pack('THAAN-MIXED', [{ grade: 'B', suits: 1 }, { grade: 'C', suits: 3 }])).status, 400)
+    assert.equal((await pack('THAAN-OVERRIDE', [{ grade: 'B', suits: 1 }], { targetSuits: 1 })).status, 400)
+    assert.deepEqual(await cutting.findOne({ _id: orderId }), beforePolicyRejections)
+    assert.equal(await packages.countDocuments(), 6)
+    assert.equal(await movements.countDocuments({ _id: { $in: ['pack:THAAN-MIXED', 'pack:THAAN-OVERRIDE'] } }), 0)
+    assert.equal((await pack('THAAN-C1', [{ grade: 'C', suits: 4 }])).status, 201)
+    const partial = [{ grade: 'B', suits: 1 }]
+    const last = await Promise.all(['THAAN-LAST-A', 'THAAN-LAST-B'].map(ref => pack(ref, partial)))
+    assert.deepEqual(last.map(result => result.status).sort(), [201, 409])
+    const partialId = last[0].status === 201 ? 'THAAN-LAST-A' : 'THAAN-LAST-B'
+    assert.equal((await pack(partialId, partial)).status, 200)
+    assert.equal((await pack(partialId, [{ grade: 'C', suits: 1 }])).status, 409)
+    assert.equal((await pack('OVER-PACK', partial)).status, 409)
+    const partialThaan = await packages.findOne({ _id: partialId })
+    assert.equal(partialThaan.suits, 1)
+    assert.equal(partialThaan.targetSuits, 4)
+    assert.deepEqual(partialThaan.contents, [{ grade: 'B', label: 'Standard', suits: 1 }])
+    const finished = await (await request('textile-production', { cookie })).json()
+    assert.deepEqual(finished.totals, { full: 7, partial: 1, nonstandard: 0, packedSuits: 29, unpacked: 0, pending: 0, quarantined: 0 })
+    assert.deepEqual(finished.byGrade, { A: 16, B: 9, C: 4 })
+    assert.deepEqual(finished.byLot, [{ lotId: productionLot, um: '174000000' }])
+    // Simulate a record posted before the API stopped accepting operator targets.
+    await packages.updateOne({ _id: partialId }, { $set: { targetSuits: 1 } })
+    const withHistoricalOverride = await (await request('textile-production', { cookie })).json()
+    assert.deepEqual(withHistoricalOverride.totals, finished.totals)
+    assert.equal((await packages.findOne({ _id: partialId })).targetSuits, 1)
+    await packages.updateOne({ _id: partialId }, { $set: { targetSuits: 4 } })
+    const historicalB = await packages.findOne({ _id: 'THAAN-B1' })
+    assert.equal(historicalB.contents[0].label, 'Standard')
+    assert.equal(historicalB.suitLengthUm, 6000000)
+    assert.equal(historicalB.defaultSuitLengthUm, 5000000)
+    const packedLength = (await packages.find({ orderId }).toArray()).reduce((sum, thaan) => sum + thaan.totalUm, 0)
+    const batch = (await cutting.findOne({ _id: orderId })).completion
+    assert.equal(packedLength + batch.wasteUm + batch.returnedUm + batch.offcutsUm, 180000000)
+    assert.equal(await movements.countDocuments({ 'document.kind': 'pack', orderId }), 8)
+    assert.equal(finished.configuration.grades.some(grade => grade.code === 'B'), false)
+    assert.equal((await put(latest.revision + 1, { ...latest.settings, thaan: { ...latest.settings.thaan, suitsPerThaan: 1 } })).status, 200)
+    assert.equal((await pack(partialId, partial)).status, 200)
+    const afterSettingChange = await (await request('textile-production', { cookie })).json()
+    assert.equal(afterSettingChange.configuration.thaan.suitsPerThaan, 1)
+    assert.deepEqual(afterSettingChange.totals, finished.totals)
+    assert.deepEqual(await packages.findOne({ _id: partialId }), partialThaan)
+    assert.equal((await put(latest.revision + 2, { ...next, localization: { ...next.localization, currency: 'USD' } })).status, 200)
     assert.deepEqual(await transactions.findOne({ _id: legacyRow._id }), legacyRow)
 
     assert.equal((await request('transactions/search', { cookie: memberCookie })).status, 200)
@@ -300,7 +416,13 @@ test('Phase 0 HTTP and replica-set acceptance rehearsal', async () => {
     await sessions.updateMany({}, { $set: { expiresAt: new Date(0) } })
     assert.equal((await request('transactions/search', { cookie: memberCookie })).status, 401)
     const blocked = 'throttle@example.test'
-    for (let i = 0; i < 10; i++) assert.equal((await login(blocked, pass)).status, 401)
+    // Seed the limit in both possible windows so clock rollover cannot reset this fixture.
+    const windowMs = 15 * 60 * 1000
+    const window = Math.floor(Date.now() / windowMs)
+    const blockedKey = createHash('sha256').update(blocked).digest('hex')
+    await attempts.insertMany([window, window + 1].map(bucket => ({
+      _id: bucket + ':' + blockedKey, count: 10, expiresAt: new Date((bucket + 1) * windowMs),
+    })))
     assert.equal((await login(blocked, pass)).status, 429)
   } finally {
     await connection.close()
