@@ -19,6 +19,7 @@ const commands = z.discriminatedUnion('kind', [
     returned: meters, offcuts: meters, waste: meters, actualSuitLength: meters.optional() }),
   z.strictObject({ kind: z.literal('grade'), ...fields, grade, suits: quantity.min(1) }),
   z.strictObject({ kind: z.literal('regrade'), ...fields, from: grade, grade, suits: quantity.min(1), reason: text.min(1) }),
+  // Accept the historical request shape so exact replays still match stored fingerprints.
   z.strictObject({ kind: z.literal('pack'), ...fields, targetSuits: quantity.min(1).max(1000).optional(),
     contents: z.array(z.strictObject({ grade, suits: quantity.min(1).max(1000) })).min(1).max(30) }),
 ])
@@ -37,7 +38,7 @@ export const GET = safeApi(async function GET() {
   const data = await connection.transaction(async session => {
     const settings = await BusinessSettings.findOne().sort({ _id: -1 }).session(session).lean()
     const configuration = settings?.settings ?? defaultBusinessSettings
-    const totals = { full: 0, partial: 0, packedSuits: 0, unpacked: 0, pending: 0, quarantined: 0 }
+    const totals = { full: 0, partial: 0, nonstandard: 0, packedSuits: 0, unpacked: 0, pending: 0, quarantined: 0 }
     const byGrade: Record<string, number> = {}
     const byLot = new Map<string, { lotId: string; um: bigint }>()
     for await (const order of orders.find({}, { session })) {
@@ -46,8 +47,9 @@ export const GET = safeApi(async function GET() {
       for (const stock of Object.values(order.grades)) totals.unpacked += stock.pending
     }
     for await (const thaan of thaans.find({}, { session })) {
-      if (thaan.suits === thaan.targetSuits) totals.full++
-      else totals.partial++
+      if (thaan.suits === thaan.defaultTargetSuits) totals.full++
+      else if (thaan.suits < thaan.defaultTargetSuits) totals.partial++
+      else totals.nonstandard++
       totals.packedSuits += thaan.suits
       for (const item of thaan.contents) byGrade[item.grade] = (byGrade[item.grade] ?? 0) + item.suits
       const lot = byLot.get(thaan.lotId) ?? { lotId: thaan.lotId, um: BigInt(0) }
@@ -150,18 +152,21 @@ export const POST = safeApi(async function POST(req: Request) {
             order.grades[body.grade] = stock
             document = { ...body, gradeLabel: selected.label }
           } else {
-            const targetSuits = body.targetSuits ?? configuration.thaan.suitsPerThaan
-            const suits = body.contents.reduce((sum, item) => sum + item.suits, 0)
-            if (suits > targetSuits || new Set(body.contents.map(item => item.grade)).size !== body.contents.length) {
-              throw new PostingError(400, 'Packing must use distinct grades and fit the target suit count')
+            if (body.targetSuits !== undefined) {
+              throw new PostingError(400, 'Packing target is set by Business Settings')
             }
-            const contents = body.contents.map(item => {
-              const stock = order.grades[item.grade]
-              if (!stock || stock.pending < item.suits) throw new PostingError(409, 'Insufficient unpacked suits for grade ' + item.grade)
-              stock.pending -= item.suits
-              stock.packed += item.suits
-              return { ...item, label: stock.label }
-            })
+            if (body.contents.length !== 1) {
+              throw new PostingError(400, 'A thaan must contain suits of one grade')
+            }
+            const targetSuits = configuration.thaan.suitsPerThaan
+            const item = body.contents[0]
+            const { suits } = item
+            if (suits > targetSuits) throw new PostingError(400, 'Suit count exceeds the standard thaan size')
+            const stock = order.grades[item.grade]
+            if (!stock || stock.pending < suits) throw new PostingError(409, 'Insufficient unpacked suits for grade ' + item.grade)
+            stock.pending -= suits
+            stock.packed += suits
+            const contents = [{ ...item, label: stock.label }]
             const suitLengthUm = order.completion.suitLengthUm
             const totalUm = suitLengthUm * suits
             document = { ...body, contents, targetSuits, suits, suitLengthUm, totalUm }

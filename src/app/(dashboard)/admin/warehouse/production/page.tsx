@@ -6,7 +6,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 type Action = 'allocate' | 'complete' | 'grade' | 'regrade' | 'pack'
 type Data = {
   canPost: boolean
-  totals: { full: number; partial: number; packedSuits: number; unpacked: number; pending: number; quarantined: number }
+  totals: { full: number; partial: number; nonstandard: number; packedSuits: number; unpacked: number; pending: number; quarantined: number }
   byGrade: Record<string, number>
   byLot: { lotId: string; um: string }[]
   configuration: { grades: { code: string; label: string }[]; thaan: { suitsPerThaan: number; metersPerSuit: number } }
@@ -14,7 +14,7 @@ type Data = {
   orders: { _id: string; lotId: string; allocatedUm: number; suitLengthUm: number; unclassified: number;
     grades: Record<string, { pending: number; packed: number }>
     completion?: { batchId: string; suitLengthUm: number; suits: number; quarantined: number; returnedUm: number; offcutsUm: number; wasteUm: number; consumedUm: number } }[]
-  thaans: { _id: string; lotId: string; orderId: string; batchId: string; suits: number; targetSuits: number; totalUm: number;
+  thaans: { _id: string; lotId: string; orderId: string; batchId: string; suits: number; defaultTargetSuits: number; totalUm: number;
     contents: { grade: string; label: string; suits: number }[] }[]
   events: { _id: string; orderId: string; lotId: string; revision: number; actor: string; postedAt: string; document: { reason?: string } }[]
 }
@@ -37,7 +37,6 @@ export default function ProductionPage() {
   const [data, setData] = useState<Data | null>(null)
   const [action, setAction] = useState<Action>('allocate')
   const [orderId, setOrderId] = useState('')
-  const [packingRows, setPackingRows] = useState(1)
   const [notice, setNotice] = useState('')
   const [saving, setSaving] = useState(false)
   const inFlight = useRef(false)
@@ -58,12 +57,11 @@ export default function ProductionPage() {
     const body: Record<string, unknown> = { kind: action }
     for (const [key, value] of values) {
       if (key === 'packGrade' || key === 'packSuits') continue
-      if ((['suitLength', 'actualSuitLength', 'targetSuits'].includes(key)) && value === '') continue
-      body[key] = ['suits', 'quarantined', 'targetSuits'].includes(key) ? Number(value) : value
+      if (['suitLength', 'actualSuitLength'].includes(key) && value === '') continue
+      body[key] = ['suits', 'quarantined'].includes(key) ? Number(value) : value
     }
     if (action === 'pack') {
-      const counts = values.getAll('packSuits')
-      body.contents = values.getAll('packGrade').map((grade, index) => ({ grade, suits: Number(counts[index]) }))
+      body.contents = [{ grade: values.get('packGrade'), suits: Number(values.get('packSuits')) }]
     }
     inFlight.current = true
     setSaving(true)
@@ -82,7 +80,6 @@ export default function ProductionPage() {
       }
       form.reset()
       setOrderId('')
-      setPackingRows(1)
       setNotice(response.status === 200 ? 'This document was already posted.' : 'Production document posted.')
       await refresh().catch(() => setNotice('Document posted successfully, but production data could not be refreshed.'))
     } catch {
@@ -109,7 +106,7 @@ export default function ProductionPage() {
           <h2 className="text-lg font-semibold">Production documents</h2>
           <div className="my-3 flex flex-wrap gap-2">
             {(Object.keys(labels) as Action[]).map(kind => <button key={kind} type="button" disabled={saving}
-              aria-pressed={kind === action} onClick={() => { setAction(kind); setOrderId(''); setPackingRows(1) }}
+              aria-pressed={kind === action} onClick={() => { setAction(kind); setOrderId('') }}
               className={'rounded-lg border px-3 py-2 text-sm ' + (kind === action ? 'border-blue-700 bg-blue-700 text-white' : 'border-slate-300')}>{labels[kind]}</button>)}
           </div>
           <form key={action} onSubmit={submit}>
@@ -144,16 +141,10 @@ export default function ProductionPage() {
                 {action === 'regrade' && <label className="text-sm">Correction reason<input className={control} name="reason" maxLength={500} required /></label>}
               </>}
               {action === 'pack' && <>
-                <label className="text-sm">Full thaan target<input className={control} name="targetSuits" type="number" min={1} max={1000} placeholder={String(data.configuration.thaan.suitsPerThaan)} /></label>
+                <p className="self-end text-sm text-slate-600">Standard thaan: {data.configuration.thaan.suitsPerThaan} suits of one grade.</p>
                 <p className="self-end text-sm text-slate-600">Available: {availableGrades.map(([code, stock]) => code + ' / ' + stock.pending).join(', ') || 'enter a cutting order'}</p>
-                {Array.from({ length: packingRows }, (_, index) => <div key={index} className="grid grid-cols-2 gap-2 rounded-lg bg-slate-50 p-2">
-                  <label className="text-sm">Packed grade<input className={control} name="packGrade" required /></label>
-                  <label className="text-sm">Packed suits<input className={control} name="packSuits" type="number" min={1} max={1000} required /></label>
-                </div>)}
-                <div className="flex gap-2 sm:col-span-2">
-                  <button type="button" className="rounded-lg border px-3 py-2 text-sm" disabled={packingRows >= 30} onClick={() => setPackingRows(count => count + 1)}>Add grade to thaan</button>
-                  {packingRows > 1 && <button type="button" className="rounded-lg border px-3 py-2 text-sm" onClick={() => setPackingRows(count => count - 1)}>Remove last grade</button>}
-                </div>
+                <label className="text-sm">Packed grade<input className={control} name="packGrade" required /></label>
+                <label className="text-sm">Packed suits<input className={control} name="packSuits" type="number" min={1} max={data.configuration.thaan.suitsPerThaan} required /></label>
               </>}
               <div className="sm:col-span-2"><button type="submit" className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white">{saving ? 'Posting...' : 'Post document'}</button></div>
             </fieldset>
@@ -162,7 +153,7 @@ export default function ProductionPage() {
         <section className={card}>
           <h2 className="text-lg font-semibold">Finished inventory</h2>
           <dl className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
-            {[['Total thaans', data.totals.full + data.totals.partial], ['Full thaans', data.totals.full], ['Partial thaans', data.totals.partial],
+            {[['Total thaans', data.totals.full + data.totals.partial + data.totals.nonstandard], ['Full thaans', data.totals.full], ['Partial thaans', data.totals.partial], ['Oversize thaans', data.totals.nonstandard],
               ['Packed suits', data.totals.packedSuits], ['Unpacked graded suits', data.totals.unpacked], ['Pending grading', data.totals.pending],
               ['Quarantined suits', data.totals.quarantined]].map(([label, value]) => <div key={label} className="rounded-lg bg-slate-50 p-3"><dt className="text-xs text-slate-600">{label}</dt><dd className="text-xl font-semibold">{value}</dd></div>)}
           </dl>
@@ -171,7 +162,7 @@ export default function ProductionPage() {
             <div><h3 className="text-sm font-semibold">Packed length by lot</h3><ul className="text-sm">{data.byLot.map(lot => <li key={lot.lotId}>{lot.lotId} / {length(lot.um)}</li>)}</ul></div>
           </div>
           <ul className="mt-4 divide-y divide-slate-100">{data.thaans.map(thaan => <li key={thaan._id} className="break-words py-2 text-sm">
-            <strong>{thaan._id}</strong> / {thaan.suits === thaan.targetSuits ? 'Full' : 'Partial'} / {thaan.suits} suits / {length(thaan.totalUm)}
+            <strong>{thaan._id}</strong> / {thaan.suits === thaan.defaultTargetSuits ? 'Full' : thaan.suits < thaan.defaultTargetSuits ? 'Partial' : 'Oversize'} / {thaan.suits} suits / {length(thaan.totalUm)}
             <p className="text-slate-600">Lot {thaan.lotId} / Order {thaan.orderId} / Batch {thaan.batchId} / {thaan.contents.map(item => item.grade + ' (' + item.label + '): ' + item.suits).join(', ')}</p>
           </li>)}</ul>
         </section>
