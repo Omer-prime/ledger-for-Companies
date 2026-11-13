@@ -25,6 +25,8 @@ export type CuttingOrder = {
 }
 export type Thaan = {
   _id: string
+  soldSuits?: number
+  saleId?: string
   orderId: string
   batchId: string
   lotId: string

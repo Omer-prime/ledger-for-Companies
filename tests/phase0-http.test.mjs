@@ -288,7 +288,7 @@ test('Phase 0 HTTP and replica-set acceptance rehearsal', async () => {
     assert.equal(partialThaan.targetSuits, 4)
     assert.deepEqual(partialThaan.contents, [{ grade: 'B', label: 'Standard', suits: 1 }])
     const finished = await (await request('textile-production', { cookie })).json()
-    assert.deepEqual(finished.totals, { full: 7, partial: 1, nonstandard: 0, packedSuits: 29, unpacked: 0, pending: 0, quarantined: 0 })
+    assert.deepEqual(finished.totals, { full: 7, partial: 1, nonstandard: 0, soldSuits: 0, soldThaans: 0, packedSuits: 29, unpacked: 0, pending: 0, quarantined: 0 })
     assert.deepEqual(finished.byGrade, { A: 16, B: 9, C: 4 })
     assert.deepEqual(finished.byLot, [{ lotId: productionLot, um: '174000000' }])
     // Simulate a record posted before the API stopped accepting operator targets.
@@ -322,6 +322,24 @@ test('Phase 0 HTTP and replica-set acceptance rehearsal', async () => {
       assert.equal((await request('transactions/' + legacyRow._id, { method, cookie })).status, 409)
     }
     assert.equal((await request('dev/seed', { method: 'POST', cookie })).status, 404)
+    const unconfigured = await request('checkout', { method: 'POST', cookie, body: {
+      kind: 'sale', reference: 'LIVE-GATE', date: '2025-01-02',
+      lines: [{ thaanId: 'THAAN-A1', suits: 1 }], total: 300, paid: 300, method: 'cash',
+    } })
+    assert.equal(unconfigured.status, 409)
+    assert.match((await unconfigured.json()).error, /general-ledger account mappings/)
+    assert.equal(await db.collection('checkout_documents').countDocuments(), 0)
+
+    const ledgerBatch = { rows: [{ partyId: String(legacyRow.account), date: '2025-01-02', debit: 2, description: 'Fixture idempotent ledger row' }] }
+    const postBatch = () => fetch(origin + '/api/transactions/bulk', {
+      method: 'POST', headers: { Origin: origin, Cookie: cookie, 'Content-Type': 'application/json',
+        'Idempotency-Key': 'd9990000-0000-4000-8000-000000000001' },
+      body: JSON.stringify(ledgerBatch),
+    })
+    assert.equal((await postBatch()).status, 200)
+    assert.equal((await (await postBatch()).json()).replayed, true)
+    assert.equal(await transactions.countDocuments({ description: 'Fixture idempotent ledger row' }), 1)
+
     assert.deepEqual(await transactions.findOne({ _id: legacyRow._id }), legacyRow)
     const product = await request('products', { method: 'POST', cookie, body: { name: 'Fixture fabric', unit: 'm' } })
     assert.equal(product.status, 201)

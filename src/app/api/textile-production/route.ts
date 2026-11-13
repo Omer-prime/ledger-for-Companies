@@ -38,7 +38,7 @@ export const GET = safeApi(async function GET() {
   const data = await connection.transaction(async session => {
     const settings = await BusinessSettings.findOne().sort({ _id: -1 }).session(session).lean()
     const configuration = settings?.settings ?? defaultBusinessSettings
-    const totals = { full: 0, partial: 0, nonstandard: 0, packedSuits: 0, unpacked: 0, pending: 0, quarantined: 0 }
+    const totals = { full: 0, partial: 0, nonstandard: 0, soldThaans: 0, soldSuits: 0, packedSuits: 0, unpacked: 0, pending: 0, quarantined: 0 }
     const byGrade: Record<string, number> = {}
     const byLot = new Map<string, { lotId: string; um: bigint }>()
     for await (const order of orders.find({}, { session })) {
@@ -47,11 +47,17 @@ export const GET = safeApi(async function GET() {
       for (const stock of Object.values(order.grades)) totals.unpacked += stock.pending
     }
     for await (const thaan of thaans.find({}, { session })) {
+      const soldCount = thaan.saleId ? thaan.suits : (thaan.soldSuits ?? 0)
+      totals.soldSuits += soldCount
+      if (thaan.saleId) totals.soldThaans++
       if (thaan.suits === thaan.defaultTargetSuits) totals.full++
       else if (thaan.suits < thaan.defaultTargetSuits) totals.partial++
       else totals.nonstandard++
       totals.packedSuits += thaan.suits
-      for (const item of thaan.contents) byGrade[item.grade] = (byGrade[item.grade] ?? 0) + item.suits
+      if (!thaan.saleId) for (const item of thaan.contents) {
+        const remaining = item.suits - (thaan.contents.length === 1 ? (thaan.soldSuits ?? 0) : 0)
+        byGrade[item.grade] = (byGrade[item.grade] ?? 0) + remaining
+      }
       const lot = byLot.get(thaan.lotId) ?? { lotId: thaan.lotId, um: BigInt(0) }
       lot.um += BigInt(thaan.totalUm)
       byLot.set(thaan.lotId, lot)

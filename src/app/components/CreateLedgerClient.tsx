@@ -97,10 +97,8 @@ export default function CreateLedgerClient() {
 
   // the selected account for this ledger (party OR bank)
   const selectedAccountId   = isPartyLedger ? party.id : isBankLedger ? bank.id : undefined
-  const selectedAccountName = isPartyLedger ? party.name : isBankLedger ? bank.name : ''
 
   const [accountClosing, setAccountClosing] = useState<number>(0) // outstanding prior to this sheet
-  const seededFirstRow = useRef<boolean>(false)
 
   const [title, setTitle] = useState<string>('Ledger')
   useEffect(() => {
@@ -141,7 +139,6 @@ export default function CreateLedgerClient() {
 
   // fetch closing when selected account changes
   useEffect(() => {
-    seededFirstRow.current = false
     setAccountClosing(0)
     const run = async () => {
       if (!selectedAccountId) return
@@ -194,42 +191,14 @@ export default function CreateLedgerClient() {
     })
   }
 
-  // seed first empty row with closing once after selecting account
-  useEffect(() => {
-    if (!(isPartyLedger || isBankLedger) || !selectedAccountId || seededFirstRow.current === true) return
-    const idx = rows.findIndex((r) => !r['date'] && !r['description'] && !r['totalDue'] && !r['debit'] && !r['credit'])
-    if (idx >= 0 && accountClosing > 0) {
-      setRows((prev) => {
-        const copy = [...prev]
-        copy[idx] = { ...copy[idx], totalDue: accountClosing }
-        return copy
-      })
-      seededFirstRow.current = true
-    }
-  }, [isPartyLedger, isBankLedger, selectedAccountId, accountClosing, rows])
-
-  // when a date is entered on a row that has empty Total Due -> fill with previous row's Remaining
-  function onDateChanged(rIdx: number, iso: string): void {
-    setRows((prev) => {
-      const copy = [...prev]
-      const row: Row = { ...(copy[rIdx] || {}) }
-      row['date'] = iso
-      // only fill if empty
-      const hasTotal = row['totalDue'] != null && row['totalDue'] !== ''
-      if (!hasTotal) {
-        const prevRemaining = rIdx > 0 ? perRowRemaining[rIdx - 1] ?? accountClosing : accountClosing
-        row['totalDue'] = prevRemaining
-      }
-      copy[rIdx] = row
-      return copy
-    })
-  }
-
   function formatNumber(n: number | null | undefined): string {
     return Number(n || 0).toLocaleString()
   }
 
+  const submission = useRef<{ body: string; key: string } | null>(null)
+  const submitting = useRef(false)
   async function save(): Promise<void> {
+    if (submitting.current) return
     const customCols = columns.filter((c) => !CORE_KEYS.has(c.key))
     const payload = rows.map((r) => {
       const meta: Record<string, unknown> = {}
@@ -255,16 +224,25 @@ export default function CreateLedgerClient() {
       (p) => p.date || p.debit || p.credit || p.description || p.voucherNo
     )
 
+    const body = JSON.stringify({ categoryId: catId || undefined, rows: filtered })
+    if (submission.current?.body !== body) submission.current = { body, key: crypto.randomUUID() }
+    submitting.current = true
     setSaving(true)
     setSaveMsg(null)
-    const res = await fetch('/api/transactions/bulk', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ categoryId: catId || undefined, rows: filtered }),
-    })
-    setSaving(false)
-    const json = await res.json().catch(() => ({} as { inserted?: number }))
-    setSaveMsg(res.ok ? `Saved ${json.inserted || 0} entries` : 'Save failed')
+    try {
+      const res = await fetch('/api/transactions/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': submission.current.key },
+        body,
+      })
+      const json = await res.json().catch(() => ({} as { inserted?: number }))
+      setSaveMsg(res.ok ? `Saved ${json.inserted || 0} entries` : 'Save failed. Review the entries and retry.')
+    } catch {
+      setSaveMsg('Save could not be confirmed. Retry with the same entries.')
+    } finally {
+      submitting.current = false
+      setSaving(false)
+    }
   }
 
   function onMaybeAddRow(e: React.KeyboardEvent<HTMLInputElement>, rIdx: number, cIdx: number) {
@@ -288,7 +266,6 @@ export default function CreateLedgerClient() {
               setParty({ name: '' })
               setBank({ name: '' })
               setAccountClosing(0)
-              seededFirstRow.current = false
             }}
           >
             <option value="">Select ledger category</option>
@@ -412,7 +389,7 @@ export default function CreateLedgerClient() {
                             type="date"
                             className="w-full rounded-md border px-2 py-1"
                             value={r[c.key] ? dayjs(r[c.key] as string | number | Date).format('YYYY-MM-DD') : ''}
-                            onChange={(e) => onDateChanged(rIdx, e.target.value)}
+                            onChange={(e) => setCell(rIdx, 'date', e.target.value)}
                             onKeyDown={onTab}
                             required={c.key === 'date'}
                           />

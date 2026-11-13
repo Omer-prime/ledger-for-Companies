@@ -1,12 +1,13 @@
 'use client'
 
 import Link from 'next/link'
+import { formatMicrometers } from '@/lib/warehouse-values'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 
 type Action = 'allocate' | 'complete' | 'grade' | 'regrade' | 'pack'
 type Data = {
   canPost: boolean
-  totals: { full: number; partial: number; nonstandard: number; packedSuits: number; unpacked: number; pending: number; quarantined: number }
+  totals: { full: number; partial: number; nonstandard: number; soldThaans: number; soldSuits: number; packedSuits: number; unpacked: number; pending: number; quarantined: number }
   byGrade: Record<string, number>
   byLot: { lotId: string; um: string }[]
   configuration: { grades: { code: string; label: string }[]; thaan: { suitsPerThaan: number; metersPerSuit: number } }
@@ -14,7 +15,7 @@ type Data = {
   orders: { _id: string; lotId: string; allocatedUm: number; suitLengthUm: number; unclassified: number;
     grades: Record<string, { pending: number; packed: number }>
     completion?: { batchId: string; suitLengthUm: number; suits: number; quarantined: number; returnedUm: number; offcutsUm: number; wasteUm: number; consumedUm: number } }[]
-  thaans: { _id: string; lotId: string; orderId: string; batchId: string; suits: number; defaultTargetSuits: number; totalUm: number;
+  thaans: { _id: string; saleId?: string; soldSuits?: number; lotId: string; orderId: string; batchId: string; suits: number; defaultTargetSuits: number; totalUm: number;
     contents: { grade: string; label: string; suits: number }[] }[]
   events: { _id: string; orderId: string; lotId: string; revision: number; actor: string; postedAt: string; document: { reason?: string } }[]
 }
@@ -26,12 +27,7 @@ const labels: Record<Action, string> = {
 const control = 'block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm'
 const card = 'min-w-0 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6'
 
-function length(value: number | string) {
-  const um = BigInt(value)
-  const scale = BigInt(1000000)
-  const fraction = (um % scale).toString().padStart(6, '0').replace(/0+$/, '')
-  return (um / scale).toLocaleString() + (fraction ? '.' + fraction : '') + ' m'
-}
+const length = (value: number | string) => formatMicrometers(value) + ' m'
 
 export default function ProductionPage() {
   const [data, setData] = useState<Data | null>(null)
@@ -151,9 +147,9 @@ export default function ProductionPage() {
           </form>
         </section>}
         <section className={card}>
-          <h2 className="text-lg font-semibold">Finished inventory</h2>
+          <h2 id="finished-inventory" className="text-lg font-semibold">Finished inventory</h2>
           <dl className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
-            {[['Total thaans', data.totals.full + data.totals.partial + data.totals.nonstandard], ['Full thaans', data.totals.full], ['Partial thaans', data.totals.partial], ['Oversize thaans', data.totals.nonstandard],
+            {[['Total thaans', data.totals.full + data.totals.partial + data.totals.nonstandard], ['Full thaans', data.totals.full], ['Partial thaans', data.totals.partial], ['Oversize thaans', data.totals.nonstandard], ['Sold thaans', data.totals.soldThaans], ['Sold suits', data.totals.soldSuits],
               ['Packed suits', data.totals.packedSuits], ['Unpacked graded suits', data.totals.unpacked], ['Pending grading', data.totals.pending],
               ['Quarantined suits', data.totals.quarantined]].map(([label, value]) => <div key={label} className="rounded-lg bg-slate-50 p-3"><dt className="text-xs text-slate-600">{label}</dt><dd className="text-xl font-semibold">{value}</dd></div>)}
           </dl>
@@ -162,7 +158,7 @@ export default function ProductionPage() {
             <div><h3 className="text-sm font-semibold">Packed length by lot</h3><ul className="text-sm">{data.byLot.map(lot => <li key={lot.lotId}>{lot.lotId} / {length(lot.um)}</li>)}</ul></div>
           </div>
           <ul className="mt-4 divide-y divide-slate-100">{data.thaans.map(thaan => <li key={thaan._id} className="break-words py-2 text-sm">
-            <strong>{thaan._id}</strong> / {thaan.suits === thaan.defaultTargetSuits ? 'Full' : thaan.suits < thaan.defaultTargetSuits ? 'Partial' : 'Oversize'} / {thaan.suits} suits / {length(thaan.totalUm)}
+            <strong>{thaan._id}</strong> / {thaan.saleId ? 'SOLD - ' + thaan.saleId : (thaan.soldSuits ? 'Opened - partly sold' : 'Available')} / {thaan.suits - (thaan.saleId ? thaan.suits : (thaan.soldSuits ?? 0))} suits remaining / {thaan.suits === thaan.defaultTargetSuits ? 'Full' : thaan.suits < thaan.defaultTargetSuits ? 'Partial' : 'Oversize'} / {thaan.suits} suits / {length(thaan.totalUm)}
             <p className="text-slate-600">Lot {thaan.lotId} / Order {thaan.orderId} / Batch {thaan.batchId} / {thaan.contents.map(item => item.grade + ' (' + item.label + '): ' + item.suits).join(', ')}</p>
           </li>)}</ul>
         </section>

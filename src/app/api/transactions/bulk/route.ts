@@ -5,6 +5,7 @@ import { dbConnect } from '@/lib/db'
 import { Account } from '@/models/Account'
 import { LedgerCategory } from '@/models/LedgerCategory'
 import { Transaction, type ITransaction } from '@/models/Transaction'
+import { digest, getSession } from '@/lib/auth'
 import { Types } from 'mongoose'
 
 type InsertDoc = Pick<
@@ -15,7 +16,9 @@ type InsertDoc = Pick<
 export const POST = safeApi(async function POST(req: Request) {
   const denied = await requirePermission('post', req)
   if (denied) return denied
-  await dbConnect()
+  const connection = (await dbConnect()).connection
+  const key = req.headers.get('Idempotency-Key')
+  if (key && !/^[a-f0-9-]{36}$/.test(key)) return apiError(400, 'Invalid posting reference')
 
   const body = await readBody(req, z.strictObject({
     categoryId: id.transform(value => value.toLowerCase()).optional(),
@@ -84,6 +87,31 @@ export const POST = safeApi(async function POST(req: Request) {
 
   if (!docs.length) return NextResponse.json({ inserted: 0 })
 
-  await Transaction.insertMany(docs)
-  return NextResponse.json({ inserted: docs.length })
+  if (!key) {
+    await Transaction.insertMany(docs)
+    return NextResponse.json({ inserted: docs.length })
+  }
+  const actor = await getSession()
+  if (!actor) return apiError(401, 'Unauthorized')
+  const events = connection.collection<{ _id: string; fingerprint: string; inserted: number }>('legacy_bulk_postings')
+  const eventId = digest(JSON.stringify([actor.email, key]))
+  const fingerprint = digest(JSON.stringify(body))
+  const replay = (prior: { fingerprint: string; inserted: number }) => prior.fingerprint === fingerprint
+    ? NextResponse.json({ inserted: prior.inserted, replayed: true })
+    : apiError(409, 'Posting reference already used with different data')
+  try {
+    return await connection.transaction(async session => {
+      const prior = await events.findOne({ _id: eventId }, { session })
+      if (prior) return replay(prior)
+      await events.insertOne({ _id: eventId, fingerprint, inserted: docs.length }, { session })
+      await Transaction.insertMany(docs, { session })
+      return NextResponse.json({ inserted: docs.length })
+    })
+  } catch (error) {
+    if (typeof error === 'object' && error && 'code' in error && error.code === 11000) {
+      const prior = await events.findOne({ _id: eventId })
+      if (prior) return replay(prior)
+    }
+    throw error
+  }
 })

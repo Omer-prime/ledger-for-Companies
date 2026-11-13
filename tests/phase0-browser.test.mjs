@@ -98,10 +98,10 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
       page.off('request', onRequest)
     }
 
-    await page.getByRole('link', { name: 'Business settings', exact: true }).click()
+    await page.getByRole('link', { name: 'Business Settings', exact: true }).click()
     await page.waitForURL(origin + '/admin/business-settings')
     await page.reload()
-    const settingsLink = page.getByRole('link', { name: 'Business settings', exact: true })
+    const settingsLink = page.getByRole('link', { name: 'Business Settings', exact: true })
     assert.equal(await settingsLink.getAttribute('aria-current'), 'page')
     await settingsLink.scrollIntoViewIfNeeded()
     const businessName = page.getByLabel('Business name', { exact: true })
@@ -131,19 +131,19 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
     assert.equal(await methods.getByLabel('Label').last().inputValue(), 'Mobile wallet')
 
     await page.goto(origin + '/admin/warehouse')
-    await page.getByRole('heading', { name: 'Warehouse', exact: true }).waitFor()
+    await page.getByRole('heading', { name: 'Fabric Warehouse', exact: true }).waitFor()
     await page.getByText('DYE-300', { exact: true }).first().waitFor()
     const warehouseScreenshots = process.env.PHASE2A_SCREENSHOTS
     if (warehouseScreenshots) await page.screenshot({ path: warehouseScreenshots + '/warehouse-desktop.png', fullPage: true })
     await page.setViewportSize({ width: 390, height: 844 })
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true)
-    await page.getByRole('button', { name: 'Record dyeing return' }).click()
-    await page.getByLabel('Dyeing job reference').waitFor()
+    await page.getByRole('button', { name: 'Receive dyed fabric' }).click()
+    await page.locator('input[name=jobId]').waitFor()
     if (warehouseScreenshots) await page.screenshot({ path: warehouseScreenshots + '/warehouse-mobile.png', fullPage: true })
-    const warehouseReference = page.getByLabel('Document reference')
-    const warehouseJob = page.getByLabel('Dyeing job reference')
+    const warehouseReference = page.locator('input[name=reference]')
+    const warehouseJob = page.locator('input[name=jobId]')
     const dyedLength = page.getByLabel('dyed length', { exact: true })
-    const postDocument = page.getByRole('button', { name: 'Post document', exact: true })
+    const postDocument = page.getByRole('button', { name: 'Save warehouse document', exact: true })
     await warehouseReference.fill('BROWSER-RETURN-10')
     await warehouseJob.fill('DYE-300')
     await dyedLength.fill('121')
@@ -180,7 +180,7 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
       button.click()
       button.click()
     })
-    await page.getByText('Posting could not be confirmed. Retry with the same document reference and values.', { exact: true }).waitFor()
+    await page.getByText('Posting could not be confirmed. Retry with the SAME document reference and values; do not make a new reference.', { exact: true }).waitFor()
     assert.equal(posts, 1)
     assert.equal(await warehouseReference.inputValue(), 'BROWSER-RETURN-10')
     assert.equal(await warehouseJob.inputValue(), 'DYE-300')
@@ -269,6 +269,50 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
     await page.getByRole('button', { name: 'Print', exact: true }).click()
     await page.locator('body[data-print-called=yes]').waitFor()
 
+    // A disposable posted document exercises the actual POS print buttons.
+    const printConnection = await mongoose.createConnection('mongodb://127.0.0.1:37171/?replicaSet=phase0&directConnection=true', {
+      dbName: 'oarlinks_phase0_fixture', serverSelectionTimeoutMS: 5000,
+    }).asPromise()
+    try {
+      await printConnection.db.collection('checkout_documents').insertOne({
+        _id: 'sale:PRINT-FIXTURE', reference: 'PRINT-FIXTURE', kind: 'sale', walkIn: true,
+        partyName: 'Print fixture', total: 300, paid: 300, method: 'cash', date: '2025-01-02',
+        postedAt: new Date(), actor: 'fixture operator',
+        items: [{ id: 'PRINT-THAAN', grade: 'A', suits: 1, totalUm: 6000000 }],
+      })
+    } finally {
+      await printConnection.close()
+    }
+    await page.goto(origin + '/admin/checkout')
+    const printCases = [
+      ['a4', 'Print Receipt', 210, 297],
+      ['a5', 'Print Receipt', 148, 210],
+      ['thermal', 'Print Receipt', 80, 200],
+      ['sticker', 'Sticker PRINT-THAAN', 50, 30],
+    ]
+    for (const [paper, button, mmWidth, mmHeight] of printCases) {
+      await page.getByLabel('Print paper').selectOption(paper)
+      const [popup] = await Promise.all([
+        page.waitForEvent('popup'), page.getByRole('button', { name: button, exact: true }).first().click(),
+      ])
+      await popup.locator('body[data-print-called=yes]').waitFor()
+      if (paper === 'sticker') {
+        assert.ok(await popup.locator('svg rect').count() > 20)
+        await popup.getByText('PRINT-THAAN', { exact: true }).waitFor()
+      } else {
+        await popup.getByText('SALE RECEIPT', { exact: true }).waitFor()
+        await popup.getByText(/Operator: fixture operator/).waitFor()
+      }
+      const pdf = await popup.pdf({ preferCSSPageSize: true, printBackground: true })
+      const raw = pdf.toString('latin1')
+      const box = /\/MediaBox\s*\[0 0 ([\d.]+) ([\d.]+)\]/.exec(raw)
+      assert.ok(box, 'PDF media box missing')
+      assert.ok(Math.abs(Number(box[1]) - mmWidth * 72 / 25.4) < 2)
+      assert.ok(Math.abs(Number(box[2]) - mmHeight * 72 / 25.4) < 2)
+      assert.equal((raw.match(/\/Type\s*\/Page\b/g) ?? []).length, 1, 'Fixture print fits one page')
+      await popup.close()
+    }
+
     await page.goto(origin + '/admin/reports')
     await page.locator('input[type=date]').nth(0).fill('2025-01-01')
     await page.locator('input[type=date]').nth(1).fill('2025-01-31')
@@ -296,7 +340,7 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
     await page.waitForURL(origin + '/admin/login')
     await login('phase0-member@example.test', 'fixture-only replacement password')
     assert.equal(await page.evaluate(async () => (await fetch('/api/users')).status), 403)
-    assert.equal(await page.getByRole('link', { name: 'Business settings', exact: true }).count(), 0)
+    assert.equal(await page.getByRole('link', { name: 'Business Settings', exact: true }).count(), 0)
     await page.goto(origin + '/admin/business-settings')
     await page.waitForURL(origin + '/admin')
   } finally {
