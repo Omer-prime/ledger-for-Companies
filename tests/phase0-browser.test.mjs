@@ -301,16 +301,34 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
     await page.getByRole('button', { name: 'Create Cash on hand' }).click()
     await page.getByText(/Cash on hand is available to select/).waitFor()
     await page.goto(origin + '/admin/opening-stock')
+    await page.getByLabel('Batch reference').fill('BROWSER-SINGLE')
+    await page.getByLabel('Physical count date').fill('2025-01-02')
+    await page.getByLabel('Stock identifier').fill('BROWSER-LOOSE')
+    await page.getByLabel('Item type').selectOption('loose')
+    await page.getByLabel('Fabric', {exact:true}).fill('Linen')
+    await page.getByLabel('Grade code').fill('A')
+    await page.getByLabel('Length per suit (m)').fill('6')
+    await page.getByLabel('Total historical cost (PKR)').fill('800')
+    await page.getByLabel('Optional selling price (PKR)').fill('1500')
+    await page.getByLabel('Source description').fill('Fixture stock count')
+    await page.getByRole('button',{name:'Preview item'}).click()
+    const single=page.getByRole('row').filter({hasText:'BROWSER-LOOSE'})
+    await single.getByText('800.00',{exact:true}).waitFor()
+    await single.getByText('1,500.00',{exact:true}).waitFor()
+    await page.getByRole('button',{name:'Save item'}).click()
+    await page.getByText(/BROWSER-SINGLE.*Awaiting verification/).waitFor()
+    await page.getByRole('button',{name:'Import CSV'}).click()
     await page.getByLabel('Batch reference').fill('BROWSER-OPENING')
     await page.getByLabel('Physical count date').fill('2025-01-02')
     await page.getByLabel('CSV rows').fill('identifier,kind,fabric,design,size,grade,suits,meters,costPkr,sellingPricePkr,source,evidence\nSHOP-001,full,Cotton,Blue,,A,4,6,2400,,Fixture opening count,Invoice 123')
     await page.getByRole('button', {name:'Preview import'}).click()
+    await page.getByRole('row').filter({hasText:'SHOP-001'}).getByText('2,400.00',{exact:true}).waitFor()
     await page.getByRole('button', {name:'Confirm import'}).click()
-    await page.getByText(/Awaiting verification/).waitFor()
+    await page.getByText(/BROWSER-OPENING.*Awaiting verification/).waitFor()
 
     // A disposable posted document exercises the actual POS print buttons.
     const printConnection = await mongoose.createConnection('mongodb://127.0.0.1:37171/?replicaSet=phase0&directConnection=true', {
-      dbName: 'oarlinks_disposable_onboarding_phase0', serverSelectionTimeoutMS: 5000,
+      dbName: 'oarlinks_disposable_usability_phase0', serverSelectionTimeoutMS: 5000,
     }).asPromise()
     try {
       const keys = ['cash','bank','receivables','revenue','finishedInventory','cogs']
@@ -401,7 +419,7 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
     await login('phase0-admin@example.test', 'fixture-only long password')
     assert.notEqual((await authCookie()).value, initial.value)
     connection = await mongoose.createConnection('mongodb://127.0.0.1:37171/?replicaSet=phase0&directConnection=true', {
-      dbName: 'oarlinks_disposable_onboarding_phase0', serverSelectionTimeoutMS: 5000,
+      dbName: 'oarlinks_disposable_usability_phase0', serverSelectionTimeoutMS: 5000,
     }).asPromise()
     await connection.db.collection('auth_sessions').updateMany({}, { $set: { expiresAt: new Date(0) } })
     await page.goto(origin + '/admin/inventory')

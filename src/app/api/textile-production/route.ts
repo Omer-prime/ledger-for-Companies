@@ -44,17 +44,29 @@ export const GET = safeApi(async function GET() {
     const byLot = new Map<string, { lotId: string; um: bigint }>()
     const approval=(await posAccounting(connection).findOne({}, {session,sort:{_id:-1}}))?.approval
     const openingStock=[]
+    const manufactured={suits:0,um:BigInt(0)}
+    const opening={suits:0,um:BigInt(0)}
+    const pendingOpening={suits:0,um:BigInt(0)}
+    const approvedOpening=new Set(approval?.capitalizedOpeningIds)
     for await (const order of orders.find({}, { session })) {
       totals.pending += order.unclassified
       totals.quarantined += order.completion?.quarantined ?? 0
       for (const stock of Object.values(order.grades)) totals.unpacked += stock.pending
     }
-    for await (const thaan of thaans.find({}, { session })) {
+    for await (const thaan of thaans.find({}, { session }).sort({postedAt:-1,_id:1})) {
+      const remaining=thaan.saleId?0:Math.max(0,thaan.suits-(thaan.soldSuits??0))
+      const remainingUm=remaining===0?BigInt(0):BigInt(thaan.totalUm)*BigInt(remaining)/BigInt(thaan.suits)
       if(thaan.opening) {
-        openingStock.push({_id:thaan._id,fabric:thaan.opening.fabric,kind:thaan.opening.kind,batchId:thaan.opening.reference,
-          available:thaan.saleId?0:thaan.suits-(thaan.soldSuits??0),approved:approval?.capitalizedOpeningIds?.includes(thaan.opening.reference)??false})
+        const approved=approvedOpening.has(thaan.opening.reference)
+        const bucket=approved?opening:pendingOpening
+        bucket.suits+=remaining
+        bucket.um+=remainingUm
+        if(openingStock.length<100) openingStock.push({_id:thaan._id,fabric:thaan.opening.fabric,kind:thaan.opening.kind,batchId:thaan.opening.reference,
+          available:remaining,approved})
         continue
       }
+      manufactured.suits+=remaining
+      manufactured.um+=remainingUm
       const soldCount = thaan.saleId ? thaan.suits : (thaan.soldSuits ?? 0)
       totals.soldSuits += soldCount
       if (thaan.saleId) totals.soldThaans++
@@ -72,6 +84,12 @@ export const GET = safeApi(async function GET() {
     }
     return {
       canPost: Boolean(actor && actor.role !== 'accountant'), totals, byGrade, openingStock,
+      availability:{
+        manufactured:{suits:manufactured.suits,um:String(manufactured.um)},
+        opening:{suits:opening.suits,um:String(opening.um)},
+        pendingOpening:{suits:pendingOpening.suits,um:String(pendingOpening.um)},
+        combined:{suits:manufactured.suits+opening.suits,um:String(manufactured.um+opening.um)},
+      },
       byLot: [...byLot.values()].map(lot => ({ lotId: lot.lotId, um: String(lot.um) })),
       configuration: { grades: configuration.grades.filter(item => item.enabled), thaan: configuration.thaan },
       lots: await lots.find({ 'balances.dyed': { $gt: 0 } }, { session }).sort({ postedAt: -1, _id: 1 }).limit(100).toArray(),

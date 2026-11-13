@@ -5,7 +5,7 @@ import mongoose from 'mongoose'
 import { hashPassword } from '../src/lib/password.ts'
 
 const uri='mongodb://127.0.0.1:37171/?replicaSet=phase0&directConnection=true'
-const database='oarlinks_disposable_onboarding_suits'
+const database='oarlinks_disposable_usability_suits'
 const origin='http://127.0.0.1:37177'
 
 // Requires a FRESH dedicated fixture DB. Never drops or cleans business databases.
@@ -191,6 +191,9 @@ test('POS integration: registered credit/cash/partial, walk-in, repayment, daily
     assert.equal(await thaans.countDocuments({'opening.reference':'DEMO-OPEN'}),0)
     assert.equal((await opening(batch)).status,201)
     assert.equal((await opening(batch)).status,200)
+    const pendingInventory=await (await send('textile-production',{cookie})).json()
+    assert.deepEqual(pendingInventory.availability.pendingOpening,{suits:11,um:'66000000'})
+    assert.deepEqual(pendingInventory.availability.combined,pendingInventory.availability.manufactured)
     const sell=(ref,id,suits,extra={})=>post({kind:'sale',reference:ref,date:day,lines:[{thaanId:id,suits}],total:3000,paid:3000,method:'cash',...extra})
     assert.equal((await sell('OPEN-01','OPEN-LOOSE',1)).status,409)
     const config=await (await send('pos-accounting',{cookie})).json()
@@ -212,6 +215,11 @@ test('POS integration: registered credit/cash/partial, walk-in, repayment, daily
     const linked=await db.collection('journal_entries').findOne({_id:sale.journalId})
     assert.equal(linked.lines.reduce((sum,line)=>sum+line.debitPaisa-line.creditPaisa,0),0)
     assert.equal(await db.collection('journal_entries').countDocuments({'source.documentId':/^sale:OPEN-/}),4)
+    const inventory=await (await send('textile-production',{cookie})).json()
+    assert.deepEqual(inventory.availability.opening,{suits:4,um:'24000000'})
+    assert.deepEqual(inventory.availability.pendingOpening,{suits:0,um:'0'})
+    assert.equal(inventory.availability.combined.suits,inventory.availability.manufactured.suits+4)
+    assert.equal(inventory.openingStock.find(item=>item._id==='OPEN-LOOSE').available,0)
     const race=await Promise.all([sell('OPEN-RACE1','OPEN-PART',1),sell('OPEN-RACE2','OPEN-PART',1)])
     assert.equal(race.filter(result=>result.status===201).length,1)
     assert.equal((await thaans.findOne({_id:'OPEN-PART'})).soldSuits,2)
