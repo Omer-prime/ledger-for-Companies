@@ -7,9 +7,13 @@ import { apiError, requirePermission, readBody, safeApi } from '@/lib/api-securi
 import { BusinessSettings } from '@/models/BusinessSettings'
 import { defaultBusinessSettings } from '@/lib/business-settings'
 import { textileProduction } from '@/models/TextileProduction'
+import { warehouse } from '@/models/Warehouse'
+import { posAccounting } from '@/lib/pos-accounting'
+import { checkoutJournal, rawMaterialCost } from '@/lib/checkout-journal'
+import { postJournal } from '@/lib/journal-posting'
+import { Account } from '@/models/Account'
 
 // CUSTOMER subledger: an invoice debits receivables; payment credits receivables.
-// Operational cash/bank register != balanced general ledger, tax, revenue or COGS.
 const reference = z.string().trim().toUpperCase().regex(/^[A-Z0-9][A-Z0-9._/-]{0,63}$/)
 const amount = z.number().int().min(0).max(1_000_000_000)
 const partyId = z.string().regex(/^[a-fA-F0-9]{24}$/)
@@ -35,12 +39,13 @@ const payment = z.strictObject({
 })
 const requestSchema = z.union([sale, payment])
 
-type Item = { id: string; grade: string; suits: number; totalUm: number; fullThaan?: boolean; lotId?: string; orderId?: string; batchId?: string }
+type Item = { id: string; grade: string; suits: number; totalUm: number; fullThaan?: boolean; lotId?: string; orderId?: string; batchId?: string; costPaisa?: number }
 type SaleRecord = {
   _id: string; kind: 'sale' | 'payment'; reference: string;
   partyId?: string; partyName: string; walkIn: boolean;
   date: string; total: number; paid: number; method?: 'cash' | 'bank';
   thaanIds: string[]; items: Item[]; actor: string; postedAt: Date; fingerprint: string;
+  journalId?: string; approvalRevision?: number; costPaisa?: number
 }
 type Receipt = {
   _id: string; sourceId: string; reference: string; date: string;
@@ -130,6 +135,7 @@ export const GET = safeApi(async function GET(req: Request) {
   const customerHistory = wanted ? await records.find({ partyId: wanted.toLowerCase() }, { projection: { fingerprint: 0 } })
     .sort({ postedAt: -1, _id: -1 }).limit(100).toArray() : []
   return Response.json({
+    accountingApproved: Boolean((await posAccounting(conn).findOne({}, { sort: { _id: -1 } }))?.approval),
     businessName: settings.profile.name, businessDay, volume: volume ?? { suitsSold: 0, soldUm: '0', fullThaans: 0 },
     customerHistory,
     parties:parties.map(p => ({id:String(p._id),name:p.name})),
@@ -154,19 +160,15 @@ export const POST = safeApi(async function POST(req: Request) {
     if (new Set(ids).size !== ids.length) return apiError(400, 'Duplicate thaan')
   }
   const conn = (await dbConnect()).connection
-  const fixtureEnabled = process.env.OARLINKS_POS_FIXTURE === '1' &&
-    /^oarlinks_(?:checkout|suit|phase0|pos)_[a-z0-9_]+$/.test(conn.name) &&
-    process.env.MONGODB_URI === 'mongodb://127.0.0.1:37171/?replicaSet=phase0&directConnection=true'
-  if (!fixtureEnabled) {
-    return apiError(409, 'POS posting is unavailable. Have an administrator approve and integrate the general-ledger account mappings before accepting payments.')
-  }
   const records = conn.collection<SaleRecord>('checkout_documents')
   const accounts = conn.collection<Party>('accounts')
   const receipts = conn.collection<Receipt>('checkout_receipts')
   const transactions = conn.collection('transactions')
-  const { thaans } = textileProduction(conn)
+  const { thaans, orders } = textileProduction(conn)
+  const { lots } = warehouse(conn)
   const id = doc.kind + ':' + doc.reference
   const fingerprint = createHash('sha256').update(JSON.stringify(doc)).digest('hex')
+  const journalId = 'pos_' + createHash('sha256').update(id).digest('hex')
 
   try {
     const replayed = await conn.transaction(async session => {
@@ -174,6 +176,16 @@ export const POST = safeApi(async function POST(req: Request) {
       if (old) {
         if (old.fingerprint !== fingerprint) throw new BusinessError(409, 'Reference already used with different data')
         return true
+      }
+      const revision = await posAccounting(conn).findOne({}, { session, sort: { _id: -1 } })
+      if (!revision?.approval) throw new BusinessError(409, 'POS posting requires approved general-ledger account mappings in Business Settings.')
+      const settings = await BusinessSettings.findOne().sort({ _id: -1 }).session(session).lean()
+      if ((settings?.settings ?? defaultBusinessSettings).localization.currency !== 'PKR') {
+        throw new BusinessError(409, 'Approved POS accounting supports PKR only.')
+      }
+      const mappedIds = Object.values(revision.approval.accounts)
+      if (await Account.countDocuments({ _id: { $in: mappedIds }, type: 'gl', archivedAt: null }).session(session) !== mappedIds.length) {
+        throw new BusinessError(409, 'An approved general-ledger account is unavailable. Review POS accounting in Business Settings.')
       }
       let customer: Types.ObjectId | undefined
       let customerName = doc.kind === 'sale' ? (doc.customerName || 'Walk-in Customer') : ''
@@ -185,14 +197,17 @@ export const POST = safeApi(async function POST(req: Request) {
           { $inc:{checkoutVersion:1} }, {session, returnDocument:'after'})
         if (!party) throw new BusinessError(400, 'Active customer not found')
         customerName = party.name
-        const opening = Number(party.openingBalance ?? 0) * (party.openingIsDebit === false ? -1 : 1)
-        previousDue = await currentDue(session, customer, opening)
+        if (doc.kind === 'payment') {
+          const opening = Number(party.openingBalance ?? 0) * (party.openingIsDebit === false ? -1 : 1)
+          previousDue = await currentDue(session, customer, opening)
+        }
       }
       const postedAt = new Date()
       const entryDate = new Date(doc.date+'T12:00:00.000Z')
       const entries: Record<string, unknown>[] = []
       const items: Item[] = []
       let total = 0, paid = 0
+      let costPaisa = 0
       let paymentMethod: 'cash' | 'bank' | undefined
       if (doc.kind === 'sale') {
         total = doc.total
@@ -204,6 +219,9 @@ export const POST = safeApi(async function POST(req: Request) {
           // Legacy thaanIds means 'sell every remaining suit' (original full-thaan behavior).
           const current = await thaans.findOne({_id:line.thaanId,saleId:{$exists:false}}, {session})
           if (!current) throw new BusinessError(409, 'Thaan unavailable or already sold: '+line.thaanId)
+          if (!revision.approval.capitalizedOrderIds?.includes(current.orderId)) {
+            throw new BusinessError(409, 'Finished inventory capitalization has not been approved for cutting order ' + current.orderId)
+          }
           const existingSold = current.soldSuits ?? 0
           const available = current.suits - existingSold
           const count = line.suits || available
@@ -221,9 +239,26 @@ export const POST = safeApi(async function POST(req: Request) {
           }
           const um = count * (updated.totalUm / updated.suits)
           if (!Number.isSafeInteger(um)) throw new BusinessError(409,'Suit length cannot be represented exactly')
+          const order = await orders.findOne({ _id: updated.orderId, lotId: updated.lotId }, { session })
+          const lot = await lots.findOne({ _id: updated.lotId }, { session })
+          if (!order?.completion || order.completion.batchId !== updated.batchId ||
+              order.completion.suitLengthUm !== updated.suitLengthUm ||
+              updated.suitLengthUm * updated.suits !== updated.totalUm ||
+              order.currency !== 'PKR' || lot?.currency !== 'PKR' || lot.minorPerMeter !== order.minorPerMeter) {
+            throw new BusinessError(409, 'Verified PKR lot and cutting cost are unavailable for thaan ' + line.thaanId)
+          }
+          let itemCost: number
+          try {
+            itemCost = rawMaterialCost(order.minorPerMeter, updated.suitLengthUm, existingSold, count)
+          } catch {
+            throw new BusinessError(409, 'Verified positive PKR cost is unavailable for thaan ' + line.thaanId)
+          }
+          costPaisa += itemCost
+          if (!Number.isSafeInteger(costPaisa)) throw new BusinessError(409, 'Sale inventory cost exceeds the supported amount')
           items.push({
             id: updated._id, grade: updated.contents.map(item => item.grade).join('/'), suits: count, totalUm: um,
             lotId: updated.lotId, orderId: updated.orderId, batchId: updated.batchId,
+            costPaisa: itemCost,
             fullThaan: existingSold === 0 && count === updated.suits && count === updated.defaultTargetSuits,
           })
         }
@@ -251,11 +286,19 @@ export const POST = safeApi(async function POST(req: Request) {
         await receipts.insertOne({_id:id,sourceId:id,reference:doc.reference,date:doc.date,amount:paid,
           method:paymentMethod,partyName:customerName,walkIn:!customer,kind:doc.kind,actor:actor.email,postedAt}, {session})
       }
+      if (await conn.collection<{ _id: string }>('journal_entries').findOne({ _id: journalId }, { session, projection: { _id: 1 } })) {
+        throw new BusinessError(409, 'A journal exists without its checkout document. Have accounting reconcile the reference before retrying.')
+      }
+      await postJournal({
+        sourceEventId: journalId, actor: actor.email, reason: 'Textile POS ' + doc.kind,
+        effectiveDate: doc.date, source: { system: 'pos', documentId: id, approvalRevision: revision._id },
+        lines: checkoutJournal(revision.approval.accounts, doc.kind, total, paid, paymentMethod, costPaisa),
+      }, session)
       await records.insertOne({_id:id,kind:doc.kind,reference:doc.reference,
         partyId:customer ? String(customer) : undefined,partyName:customerName,walkIn:!customer,
         date:doc.date,total,paid,method:paymentMethod,
         thaanIds:doc.kind==='sale'?items.map(item=>item.id):[],items,
-        actor:actor.email,postedAt,fingerprint},{session})
+        actor:actor.email,postedAt,fingerprint,journalId,approvalRevision:revision._id,costPaisa},{session})
       return false
     })
     return Response.json({id,replayed}, {status:replayed?200:201})

@@ -43,7 +43,7 @@ export const GET = safeApi(async function GET(req: Request) {
   const { start: fromDate, end: toDate } = businessDateRange(from, to, timeZone)
 
   // Opening = signed openingBalance + all tx before "from"
-  const signedOpening = Number(acc.openingBalance || 0) * (acc.openingIsDebit ? 1 : -1)
+  const signedOpening = Number(acc.openingBalance || 0) * (acc.openingIsDebit === false ? -1 : 1)
 
   const preMatch: Record<string, unknown> = { account: new mongoose.Types.ObjectId(accountId) }
   if (fromDate) preMatch.date = { $lt: fromDate }

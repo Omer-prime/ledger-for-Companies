@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import dayjs from 'dayjs'
+import utc from 'dayjs/plugin/utc'
+dayjs.extend(utc)
 import AccountSelect from './AccountSelect'
 import LedgerTable, { type Column } from './LedgerTable'
 import ExportButtons from './ExportButtons'
@@ -31,10 +33,11 @@ type ApiData = {
   totals: { period: Period; items: Tot[] }
 }
 
-export default function LedgerClient() {
+export default function LedgerClient({ timeZone }: { timeZone: string }) {
+  const businessToday = () => dayjs.utc(new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()))
   const [accountId, setAccountId] = useState<string>('')
-  const [from, setFrom] = useState<string>(dayjs().startOf('month').format('YYYY-MM-DD'))
-  const [to, setTo] = useState<string>(dayjs().endOf('month').format('YYYY-MM-DD'))
+  const [from, setFrom] = useState<string>(businessToday().startOf('month').format('YYYY-MM-DD'))
+  const [to, setTo] = useState<string>(businessToday().endOf('month').format('YYYY-MM-DD'))
   const [period, setPeriod] = useState<Period>('day')
   const [title, setTitle] = useState<string>('Ledger Statement') // print heading
   const [data, setData] = useState<ApiData | null>(null)
@@ -88,26 +91,20 @@ export default function LedgerClient() {
 
   // quick range helpers
   function setToday() {
-    const d = new Date()
-    const y = d.toISOString().slice(0, 10)
-    setFrom(y)
-    setTo(y)
+    const day = businessToday().format('YYYY-MM-DD')
+    setFrom(day)
+    setTo(day)
   }
   function setLastNDays(n: number) {
-    const end = new Date()
-    const start = new Date()
-    start.setDate(start.getDate() - (n - 1))
-    setFrom(start.toISOString().slice(0, 10))
-    setTo(end.toISOString().slice(0, 10))
+    const end = businessToday()
+    setFrom(end.subtract(n - 1, 'day').format('YYYY-MM-DD'))
+    setTo(end.format('YYYY-MM-DD'))
   }
   function setThisMonth() {
-    const d = new Date()
-    const first = new Date(d.getFullYear(), d.getMonth(), 1)
-    const last = new Date(d.getFullYear(), d.getMonth() + 1, 0)
-    setFrom(first.toISOString().slice(0, 10))
-    setTo(last.toISOString().slice(0, 10))
+    const day = businessToday()
+    setFrom(day.startOf('month').format('YYYY-MM-DD'))
+    setTo(day.endOf('month').format('YYYY-MM-DD'))
   }
-
   return (
     <section className="space-y-4">
       <div className="rounded-2xl bg-white p-4 shadow-soft no-print">

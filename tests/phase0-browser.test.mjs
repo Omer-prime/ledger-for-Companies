@@ -107,6 +107,7 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
     const businessName = page.getByLabel('Business name', { exact: true })
     await businessName.waitFor()
     assert.equal(await businessName.inputValue(), 'M AZEEM FABRICS')
+    await page.getByLabel('Currency code').fill('PKR')
     await page.getByText('24 meters per thaan', { exact: true }).waitFor()
     await page.getByText(/1 meter = 1,000,000 \u00b5m/).waitFor()
     const screenshots = process.env.PHASE1_SCREENSHOTS
@@ -271,6 +272,9 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
     await page.goto(origin + '/ledger')
     await page.getByRole('heading', { name: 'Customer statements' }).waitFor()
     await page.getByRole('link', { name: 'Customer Statements' }).waitFor()
+    await page.getByRole('button', { name: 'Today', exact: true }).click()
+    const expectedDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+    assert.equal(await page.locator('input[type=date]').first().inputValue(), expectedDay)
     await page.locator('input[type=date]').first().fill('2025-01-01')
     await page.locator('input[type=date]').last().fill('2025-01-31')
     await page.locator('select').first().selectOption({ label: 'Fixture account (party)' })
@@ -296,12 +300,41 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
       dbName: 'oarlinks_phase0_fixture', serverSelectionTimeoutMS: 5000,
     }).asPromise()
     try {
-      await printConnection.db.collection('checkout_documents').insertOne({
-        _id: 'sale:PRINT-FIXTURE', reference: 'PRINT-FIXTURE', kind: 'sale', walkIn: true,
-        partyName: 'Print fixture', total: 300, paid: 300, method: 'cash', date: '2025-01-02',
-        postedAt: new Date(), actor: 'fixture operator',
-        items: [{ id: 'PRINT-THAAN', grade: 'A', suits: 1, totalUm: 6000000 }],
-      })
+      const keys = ['cash','bank','receivables','revenue','finishedInventory','cogs']
+      const accounts = Object.fromEntries(keys.map(key => [key, new mongoose.Types.ObjectId()]))
+      await printConnection.db.collection('accounts').insertMany(keys.map(key => ({ _id: accounts[key], name: 'Browser GL ' + key, type: 'gl' })))
+      const approvalStatus = await page.evaluate(async accounts => {
+        const response = await fetch('/api/pos-accounting', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+          revision: 0, approval: { accounts, policy: 'raw-material-length-v1', businessApprovalReference: 'Browser fixture approval',
+            capitalizedOrderIds: ['MOBILE-CUT'], reconciledAndCapitalized: true, noTaxDiscountsOrReturns: true },
+        }) })
+        return response.status
+      }, Object.fromEntries(keys.map(key => [key, String(accounts[key])])))
+      assert.equal(approvalStatus, 200)
+      await page.goto(origin + '/admin/checkout')
+      await page.getByLabel('Document number').fill('BROWSER-WALKIN')
+      await page.getByRole('checkbox', { name: /MOBILE-THAAN/ }).check()
+      await page.getByLabel('Total sale amount (PKR)', { exact: true }).fill('3000')
+      const loseConfirmation = async route => {
+        if (route.request().method() !== 'POST') return route.continue()
+        assert.equal((await route.fetch()).status(), 201)
+        await route.abort()
+      }
+      await page.route('**/api/checkout', loseConfirmation)
+      await page.getByRole('button', { name: 'Complete Sale' }).click()
+      await page.getByText(/Response lost. Retry with the SAME reference/).waitFor()
+      await page.unroute('**/api/checkout', loseConfirmation)
+      await page.getByRole('button', { name: 'Complete Sale' }).click()
+      await page.getByText(/already posted. No duplicate/).waitFor()
+      const record = await printConnection.db.collection('checkout_documents').findOne({ _id: 'sale:BROWSER-WALKIN' })
+      assert.equal(record.items[0].totalUm, 5500000)
+      assert.equal(record.items[0].costPaisa, 5500)
+      assert.equal(await printConnection.db.collection('journal_entries').countDocuments({ _id: record.journalId }), 1)
+      const report = await page.evaluate(async () => (await fetch('/api/checkout')).json())
+      assert.equal(report.totals.cashReceived, 3000)
+      assert.ok(report.dailyDocuments.some(doc => doc.reference === 'BROWSER-WALKIN'))
+      assert.ok(!report.thaans.some(thaan => thaan.id === 'MOBILE-THAAN'))
+      assert.equal(await printConnection.db.collection('transactions').countDocuments({ 'meta.source': record._id }), 0)
     } finally {
       await printConnection.close()
     }
@@ -310,7 +343,7 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
       ['a4', 'Print Receipt', 210, 297],
       ['a5', 'Print Receipt', 148, 210],
       ['thermal', 'Print Receipt', 80, 200],
-      ['sticker', 'Sticker PRINT-THAAN', 50, 30],
+      ['sticker', 'Sticker MOBILE-THAAN', 50, 30],
     ]
     for (const [paper, button, mmWidth, mmHeight] of printCases) {
       await page.getByLabel('Print paper').selectOption(paper)
@@ -320,10 +353,10 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
       await popup.locator('body[data-print-called=yes]').waitFor()
       if (paper === 'sticker') {
         assert.ok(await popup.locator('svg rect').count() > 20)
-        await popup.getByText('PRINT-THAAN', { exact: true }).waitFor()
+        await popup.getByText('MOBILE-THAAN', { exact: true }).waitFor()
       } else {
         await popup.getByText('SALE RECEIPT', { exact: true }).waitFor()
-        await popup.getByText(/Operator: fixture operator/).waitFor()
+        await popup.getByText(/Operator: phase0-admin/).waitFor()
       }
       const pdf = await popup.pdf({ preferCSSPageSize: true, printBackground: true })
       const raw = pdf.toString('latin1')
@@ -362,6 +395,9 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
     await page.waitForURL(origin + '/admin/login')
     await login('phase0-member@example.test', 'fixture-only replacement password')
     assert.equal(await page.evaluate(async () => (await fetch('/api/users')).status), 403)
+    assert.equal(await page.evaluate(async () => (await fetch('/api/pos-accounting', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ revision: 1, approval: null }),
+    })).status), 403)
     assert.equal(await page.getByRole('link', { name: 'Business Settings', exact: true }).count(), 0)
     await page.goto(origin + '/admin/business-settings')
     await page.waitForURL(origin + '/admin')

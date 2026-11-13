@@ -1,3 +1,4 @@
+import { approvePosFixture } from './fixtures/pos-accounting.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import mongoose from 'mongoose'
@@ -42,8 +43,31 @@ test('POS integration: registered credit/cash/partial, walk-in, repayment, daily
     const post=body=>send('checkout',{method:'POST',body,cookie})
     const day='2026-11-12',partyId=String(customer)
     const first={kind:'sale',reference:'POS-CREDIT-001',date:day,partyId,thaanIds:['POS-T001'],total:20000,paid:0}
+    assert.equal((await post(first)).status,409,'Missing approval must block new posting')
+    const mappings = await approvePosFixture(db, mongoose.Types.ObjectId, body => send('pos-accounting',{method:'PUT',body,cookie}))
+    assert.equal((await post({...first,paid:first.total+1})).status,400)
+    await db.collection('warehouse_lots').updateOne({_id:'LOT-POS'},{ $set:{minorPerMeter:0} })
+    assert.equal((await post(first)).status,409,'Unknown or zero cost must block posting')
+    assert.equal((await thaans.findOne({_id:'POS-T001'})).soldSuits,undefined)
+    assert.equal(await docs.countDocuments(),0)
+    await db.collection('warehouse_lots').updateOne({_id:'LOT-POS'},{ $set:{minorPerMeter:15000} })
+    await db.createCollection('journal_entries',{validator:{reason:'blocked by fixture'}})
+    assert.equal((await post({...first,paid:1000,method:'cash'})).status,503,'Journal failure must roll back stock and customer movement')
+    assert.equal((await thaans.findOne({_id:'POS-T001'})).soldSuits,undefined)
+    assert.equal(await transactions.countDocuments(),0)
+    assert.equal(await cashbook.countDocuments(),0)
+    assert.equal(await docs.countDocuments(),0)
+    await db.command({collMod:'journal_entries',validator:{}})
     assert.equal((await post(first)).status,201)
     assert.equal((await post(first)).status,200,'Same document replay should not duplicate')
+    const record = await docs.findOne({_id:'sale:'+first.reference})
+    const journal = await db.collection('journal_entries').findOne({_id:record.journalId})
+    assert.deepEqual(journal.lines, [
+      {accountId:String(mappings.receivables),debitPaisa:2000000,creditPaisa:0},
+      {accountId:String(mappings.revenue),debitPaisa:0,creditPaisa:2000000},
+      {accountId:String(mappings.cogs),debitPaisa:360000,creditPaisa:0},
+      {accountId:String(mappings.finishedInventory),debitPaisa:0,creditPaisa:360000},
+    ])
     assert.equal((await post({...first,total:20001})).status,409,'Reused ref with different amount must fail')
     assert.equal((await post({...first,reference:'POS-DUPLICATE'})).status,409,'Sold thaan must not sell twice')
     const repayment={kind:'payment',reference:'POS-REPAY-001',date:day,partyId,amount:8000,method:'cash'}
@@ -92,6 +116,19 @@ test('POS integration: registered credit/cash/partial, walk-in, repayment, daily
     assert.equal(statement.opening,0)
     assert.equal(statement.closing,report.due)
     assert.equal(statement.rows.at(-1).runningBalance,report.due)
+    const reconciliation = await (await send('pos-accounting?date='+day,{cookie})).json()
+    const gl = new Map(reconciliation.journal.map(line=>[line._id, {
+      debit: Number(line.debitPaisa), credit: Number(line.creditPaisa),
+    }]))
+    const net = key => { const row = gl.get(String(mappings[key])); return row.debit - row.credit }
+    assert.equal([...gl.values()].reduce((sum,line)=>sum+line.debit-line.credit,0),0)
+    assert.equal(net('receivables'),report.due*100)
+    assert.equal(net('cash'),report.totals.cashReceived*100)
+    assert.equal(net('bank'),report.totals.bankReceived*100)
+    assert.equal(net('revenue'),-report.totals.saleTotal*100)
+    const soldCost = report.dailyDocuments.reduce((sum,doc)=>sum+doc.costPaisa,0)
+    assert.equal(net('cogs'),soldCost)
+    assert.equal(net('finishedInventory'),-soldCost)
     assert.equal(report.thaans.length,1,'Three suits remain in one opened thaan')
     assert.equal(report.totals.sales,7)
     assert.equal(report.totals.walkInSales,4)

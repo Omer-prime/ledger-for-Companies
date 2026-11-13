@@ -9,7 +9,7 @@ type Doc = { _id:string;kind:'sale'|'payment';reference:string;partyId?:string;p
 type Receipt = { _id:string;reference:string;partyName:string;amount:number;method:'cash'|'bank';kind:string;date:string }
 type Totals = {saleTotal:number;sales:number;walkInSales:number;paidAtSale:number;paymentsAgainstDue:number;
   newUdhar:number;cashReceived:number;bankReceived:number}
-type Data = {parties:{id:string;name:string}[];thaans:Item[];recent:Doc[];dailyDocuments:Doc[];
+type Data = {accountingApproved:boolean;parties:{id:string;name:string}[];thaans:Item[];recent:Doc[];dailyDocuments:Doc[];
   receipts:Receipt[];businessName:string;businessDay:string;volume:{suitsSold:number;soldUm:string;fullThaans:number};customerHistory:Doc[];day:string;dailyCount:number;totals:Totals;due:number|null}
 const input = 'block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm'
 const money = (value:number) => 'Rs '+Number(value).toLocaleString('en-PK')
@@ -44,7 +44,7 @@ function receiptHtml(d:Doc,businessName:string){
 function dailyHtml(d:Data){
   const t=d.totals
   const rows=d.dailyDocuments.map(x=>`<tr><td>${esc(x.reference)}</td><td>${esc(x.partyName)}</td><td>${x.kind==='sale'?'Sale':'Repayment'}</td><td class="right">${money(x.total)}</td><td class="right">${money(x.paid)}</td><td class="right">${money(x.kind==='sale'?x.total-x.paid:0)}</td></tr>`).join('')
-  return `<h1>${esc(d.businessName)}</h1><h2>Daily Sales & Receipts — ${esc(d.day)}</h2><p>Sales: <b>${t.sales}</b>, Walk-ins: <b>${t.walkInSales}</b>, Sales value: <b>${money(t.saleTotal)}</b></p><p>Received with sales: ${money(t.paidAtSale)} · Old Udhar recovered: ${money(t.paymentsAgainstDue)}</p><p>Cash received: ${money(t.cashReceived)} · Bank received: ${money(t.bankReceived)} · New Udhar: ${money(t.newUdhar)}</p><table><thead><tr><th>Reference</th><th>Customer</th><th>Type</th><th class="right">Sale</th><th class="right">Received</th><th class="right">New Udhar</th></tr></thead><tbody>${rows}</tbody></table>${d.dailyCount>d.dailyDocuments.length?'<p><b>IMPORTANT: Only part of the daily register is shown. Use a date-filtered export before official reconciliation.</b></p>':''}<p class="small">Operational POS report. Not a fully reconciled double-entry general ledger.</p>`
+  return `<h1>${esc(d.businessName)}</h1><h2>Daily Sales & Receipts — ${esc(d.day)}</h2><p>Sales: <b>${t.sales}</b>, Walk-ins: <b>${t.walkInSales}</b>, Sales value: <b>${money(t.saleTotal)}</b></p><p>Received with sales: ${money(t.paidAtSale)} · Old Udhar recovered: ${money(t.paymentsAgainstDue)}</p><p>Cash received: ${money(t.cashReceived)} · Bank received: ${money(t.bankReceived)} · New Udhar: ${money(t.newUdhar)}</p><table><thead><tr><th>Reference</th><th>Customer</th><th>Type</th><th class="right">Sale</th><th class="right">Received</th><th class="right">New Udhar</th></tr></thead><tbody>${rows}</tbody></table>${d.dailyCount>d.dailyDocuments.length?'<p><b>IMPORTANT: Only part of the daily register is shown. Use a date-filtered export before official reconciliation.</b></p>':''}<p class="small">Operational POS report. Reconcile against the linked journals; older documents may predate journal integration.</p>`
 }
 
 export default function CheckoutPage(){
@@ -144,7 +144,7 @@ export default function CheckoutPage(){
   const t=data?.totals
   return <main className="mx-auto max-w-6xl space-y-5">
     <header className="rounded-xl bg-slate-900 p-5 text-white"><h1 className="text-2xl font-bold">OarLinks Textile POS — Sales, Udhar & Receipts</h1><p className="mt-2 text-sm">Sell one suit, several suits or an entire thaan. Handle walk-ins, collect payments and print daily reports.</p></header>
-    <div role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">Development review only: POS and customer subledger are implemented. General-ledger revenue, cash/bank, tax and COGS journals are NOT integrated. Do not use for production financial accounting until independently approved.</div>
+    {data && !data.accountingApproved && <div role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">New postings are blocked. Ask an administrator to review POS accounting in Business Settings. An existing reference can still be retried to confirm a prior posting.</div>}
     <section className="rounded-xl bg-white p-5 shadow-sm space-y-4">
       <h2 className="text-lg font-semibold">Checkout / Receive Payment</h2>
       <div className="grid gap-3 sm:grid-cols-3">

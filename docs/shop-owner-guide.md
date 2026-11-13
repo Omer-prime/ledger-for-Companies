@@ -6,7 +6,7 @@ In Fabric Warehouse, enter a unique challan number for each receipt, dispatch or
 
 Use Allocate for cutting to select a dyed lot and record the measured suit length and waste. An allocated lot is in production. After grading, pack one grade per thaan and check Finished suits and thaans. Other Product Inventory is separate.
 
-The review POS supports walk-ins, named customers, part payments and old Udhar repayments in disposable fixtures. Select the suits you are selling, verify the amount received and keep the same document reference when retrying. The daily POS report lists new sales and old Udhar collections separately. In Customer Statements, select the exact account and date range, then check the opening and closing balances. Print on A4 or A5. The old Create Ledger worksheet is review-only; ask accounting to reconcile unclear historical figures before any correction.
+When accounting has approved the mappings and stock capitalization, POS supports walk-ins, named customers, part payments and old Udhar repayments with the approved accounting policy. Select the suits you are selling, verify the amount received and keep the same document reference when retrying. The daily POS report lists new sales and old Udhar collections separately. In Customer Statements, select the exact account and date range, then check the opening and closing balances. Print on A4 or A5. The old Create Ledger worksheet is review-only; ask accounting to reconcile unclear historical figures before any correction.
 
 Use Print Receipt on the completed document. Select paper that matches the printer, and use the label action for the thaan barcode. Check the printer preview before printing.
 
