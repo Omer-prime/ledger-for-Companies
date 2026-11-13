@@ -10,3 +10,5 @@ Use an approved Node.js 22 LTS patch release and a supported MongoDB replica set
 6. Install printer drivers and select A4, A5, 80 mm receipt, or 50 × 30 mm label stock to match the application. Use actual size and disable browser headers and footers. Check alignment and scan several labels before acceptance. Browser printing uses the print dialog. Hardware calibration is pending.
 
 Live POS posting requires approved accounting mappings and balanced journal integration before installation acceptance. The startup script disables fixture posting.
+
+Set the business name and timezone in Business Settings. POS and Customer Statements use those settings. During rehearsal, reconcile opening customer balances against original records and confirm that statement dates, closing balances and print previews are correct. Do not re-enter old worksheet figures as new Udhar. Rehearse backup and restore before using any customer database.

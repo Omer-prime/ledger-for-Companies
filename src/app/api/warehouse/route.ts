@@ -46,13 +46,16 @@ export const GET = safeApi(async function GET() {
       } },
       { $project: { um: { $toString: '$um' }, valueNumerator: { $toString: '$valueNumerator' } } },
     ], { session }).toArray()
+    const movements = await events.find({}, { session, projection: { fingerprint: 0 } }).sort({ postedAt: -1, _id: 1 }).limit(100).toArray()
+    const relatedJobs = await jobs.find({ _id: { $in: movements.flatMap(event => event.jobId ? [event.jobId] : []) } }, { session }).toArray()
+    const processors = new Map(relatedJobs.map(job => [job._id, job.processor]))
     return {
       balances,
       canPost: Boolean(actor && actor.role !== 'accountant'),
       lots: await lots.find({}, { session }).sort({ postedAt: -1, _id: 1 }).limit(100).toArray(),
       jobs: await jobs.find({ outstandingUm: { $gt: 0 } }, { session }).sort({ postedAt: -1, _id: 1 }).limit(100).toArray(),
       outstandingJobs: await jobs.countDocuments({ outstandingUm: { $gt: 0 } }, { session }),
-      events: await events.find({}, { session, projection: { fingerprint: 0 } }).sort({ postedAt: -1, _id: 1 }).limit(100).toArray(),
+      events: movements.map(event => ({ ...event, processor: event.jobId ? processors.get(event.jobId) : undefined })),
       accounts: (await Account.find({ type: { $in: ['supplier', 'party'] }, archivedAt: null })
         .select('name type meta').sort({ name: 1 }).session(session).lean()).map(account => {
           const tag = account.meta?.partyKind

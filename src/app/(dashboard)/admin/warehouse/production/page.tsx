@@ -33,6 +33,7 @@ export default function ProductionPage() {
   const [data, setData] = useState<Data | null>(null)
   const [action, setAction] = useState<Action>('allocate')
   const [orderId, setOrderId] = useState('')
+  const [lotId, setLotId] = useState('')
   const [notice, setNotice] = useState('')
   const [saving, setSaving] = useState(false)
   const inFlight = useRef(false)
@@ -76,6 +77,7 @@ export default function ProductionPage() {
       }
       form.reset()
       setOrderId('')
+      setLotId('')
       setNotice(response.status === 200 ? 'This document was already posted.' : 'Production document posted.')
       await refresh().catch(() => setNotice('Document posted successfully, but production data could not be refreshed.'))
     } catch {
@@ -111,8 +113,13 @@ export default function ProductionPage() {
                 <input className={control} name="reference" required maxLength={64} />
               </label>
               {action === 'allocate' ? <>
-                <label className="text-sm">Dyed lot reference<input className={control} name="lotId" list="dyed-lots" required maxLength={64} /></label>
-                <datalist id="dyed-lots">{data.lots.map(lot => <option key={lot._id} value={lot._id}>{lot.fabric} / {length(lot.balances.dyed)}</option>)}</datalist>
+                <label className="text-sm">Available dyed lot
+                  <select className={control} name="lotId" value={lotId} onChange={event => setLotId(event.target.value)} required>
+                    <option value="">Select a dyed lot</option>
+                    {lotId && !data.lots.some(lot => lot._id === lotId) && <option value={lotId}>{lotId} (previous selection)</option>}
+                    {data.lots.map(lot => <option key={lot._id} value={lot._id}>{lot._id} / {lot.fabric} / {length(lot.balances.dyed)}</option>)}
+                  </select>
+                </label>
                 <label className="text-sm">Allocation (meters)<input className={control} name="length" inputMode="decimal" required /></label>
                 <label className="text-sm">Suit length (meters)<input className={control} name="suitLength" inputMode="decimal" placeholder={String(data.configuration.thaan.metersPerSuit)} /></label>
               </> : <>

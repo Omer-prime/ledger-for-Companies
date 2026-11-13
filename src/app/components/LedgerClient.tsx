@@ -7,9 +7,6 @@ import LedgerTable, { type Column } from './LedgerTable'
 import ExportButtons from './ExportButtons'
 import { toCSV } from '@/utils/csv'
 
-const FACTORY_NAME =
-  process.env.NEXT_PUBLIC_FACTORY_NAME || process.env.NEXT_PUBLIC_APP_NAME || 'Factory'
-
 type Period = 'day' | 'month'
 
 type LedgerRow = {
@@ -27,6 +24,9 @@ type Tot = { key: string; debit: number; credit: number; closing: number }
 
 type ApiData = {
   opening: number
+  closing: number
+  timeZone: string
+  businessName: string
   rows: LedgerRow[]
   totals: { period: Period; items: Tot[] }
 }
@@ -39,6 +39,8 @@ export default function LedgerClient() {
   const [title, setTitle] = useState<string>('Ledger Statement') // print heading
   const [data, setData] = useState<ApiData | null>(null)
   const [loading, setLoading] = useState<boolean>(false)
+  const [error, setError] = useState('')
+  const [paper, setPaper] = useState<'A4' | 'A5'>('A4')
 
   const columns: Column[] = useMemo(
     () => [
@@ -52,29 +54,27 @@ export default function LedgerClient() {
     []
   )
 
-  async function load() {
-    if (!accountId) return
-    setLoading(true)
-    try {
-      const qp = new URLSearchParams({
-        accountId,
-        from,
-        to,
-        period,
-      })
-      const res = await fetch(`/api/transactions?${qp.toString()}`)
-      const json: ApiData = await res.json()
-      setData(json)
-    } finally {
-      setLoading(false)
-    }
-  }
-
   useEffect(() => {
-    void load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setData(null)
+    setError('')
+    setLoading(Boolean(accountId))
+    if (!accountId) return
+    const controller = new AbortController()
+    const query = new URLSearchParams({ accountId, from, to, period })
+    void fetch('/api/transactions?' + query, { signal: controller.signal, cache: 'no-store' })
+      .then(async response => {
+        if (!response.ok) throw new Error()
+        const result: ApiData = await response.json()
+        if (!controller.signal.aborted) setData(result)
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setError('Statement could not be loaded. Check the date range and your access.')
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false)
+      })
+    return () => controller.abort()
   }, [accountId, from, to, period])
-
   function exportCSV() {
     if (!data) return
     const headers = columns.map((c) => ({ key: c.key as keyof LedgerRow, label: c.label }))
@@ -159,11 +159,15 @@ export default function LedgerClient() {
           </button>
         </div>
 
-        <div className="mt-3 flex items-center justify-between">
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
           <div className="text-sm opacity-70">
             Opening: <b>{(data?.opening ?? 0).toLocaleString()}</b>
           </div>
-          <ExportButtons onCSV={exportCSV} />
+          {data && <>
+            <p className="text-sm">Closing balance: <b>{data.closing.toLocaleString()}</b></p>
+            <label className="text-sm">Print size <select className="rounded-lg border p-1" value={paper} onChange={event => setPaper(event.target.value === 'A5' ? 'A5' : 'A4')}><option>A4</option><option>A5</option></select></label>
+            <ExportButtons onCSV={exportCSV} />
+          </>}
         </div>
       </div>
 
@@ -176,18 +180,21 @@ export default function LedgerClient() {
 
         {data && (
           <div className="print-area">
-            <div className="only-print print-header">{title}</div>
+            {paper === 'A5' && <style>{'@media print { @page { size: A5; } }'}</style>}
+            <div className="only-print print-header">{title} · {from} to {to}</div>
+            <p className="only-print">Opening: {data.opening.toLocaleString()} · Closing: {data.closing.toLocaleString()}</p>
             <LedgerTable
               columns={columns}
               rows={data.rows}
               totals={data.totals.items}
               period={period}
+              timeZone={data.timeZone}
             />
-            <div className="only-print print-footer">{FACTORY_NAME}</div>
+            <div className="only-print print-footer">{data.businessName}</div>
           </div>
         )}
 
-        {!loading && !data && (
+        {error && <p role="alert" className="rounded-xl bg-white p-4 text-red-700">{error}</p>}{!loading && !data && !error && (
           <div className="rounded-2xl bg-white p-6 text-sm text-slate-600 shadow-soft">
             Select an account and date range to view the ledger.
           </div>

@@ -5,21 +5,21 @@ export default function AdminHome() {
   return (
     <main className="space-y-6">
       {/* Hero */}
-      <section className="overflow-hidden rounded-2xl bg-gradient-to-br from-blue-600 via-blue-600 to-blue-700 text-white shadow-soft">
+      <section className="overflow-hidden rounded-2xl bg-slate-900 text-white shadow-soft">
         <div className="relative p-6 md:p-8">
           <div className="pointer-events-none absolute -right-10 -top-10 h-56 w-56 rounded-full bg-white/10 blur-3xl" />
           <h1 className="text-2xl font-semibold tracking-tight md:text-3xl">
             Welcome 👋
           </h1>
           <p className="mt-1 max-w-2xl text-sm text-white/85">
-            Manage categories, parties, products and build ledgers. Use the quick actions below to get started fast.
+            Manage textile stock, sales and customer statements from one place.
           </p>
           <div className="mt-5 flex flex-wrap gap-3">
             <Link
-              href="/admin/create-ledger"
+              href="/admin/checkout"
               className="rounded-xl bg-white px-4 py-2 text-sm font-medium text-blue-700 shadow-soft transition hover:-translate-y-0.5 hover:bg-slate-50"
             >
-              + Create Ledger
+              Open POS
             </Link>
             <Link
               href="/admin/reports"
@@ -56,9 +56,9 @@ export default function AdminHome() {
 
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <ActionTile
-            title="Build a new Ledger"
-            desc="Choose columns, add entries, print or export."
-            href="/admin/create-ledger"
+            title="Sell fabric and receive payments"
+            desc="Open textile POS for sales and Udhar payments."
+            href="/admin/checkout"
             icon="🧾"
           />
           <ActionTile
@@ -102,7 +102,7 @@ export default function AdminHome() {
             <h3 className="font-semibold">Pro tips</h3>
             <ul className="mt-1 list-inside list-disc text-sm leading-6">
               <li>
-                For Party/Product ledgers, start typing in the Description/Product cell to search and auto-fill details.
+                Use Customer Statements to review posted transactions and balances.
               </li>
               <li>Printing looks best from Chrome — use “A4” and keep margins to default.</li>
               <li>Use “Monthly totals” in reports when sharing statements with clients.</li>

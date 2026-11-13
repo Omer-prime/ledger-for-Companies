@@ -197,6 +197,28 @@ test('Phase 0 HTTP and replica-set acceptance rehearsal', async () => {
     assert.deepEqual(reconciled, lotBefore.balances)
     assert.deepEqual(Object.fromEntries(warehouseData.balances.map(balance => [balance._id.stage, Number(balance.um)])), reconciled)
     assert.equal(warehouseData.jobs.reduce((sum, job) => sum + job.outstandingUm, 0), reconciled.processor)
+
+    const acceptanceReceipt = { ...receipt, reference: 'MANUAL-GR-10000', quantity: '10000' }
+    const acceptanceDispatch = { ...dispatch, reference: 'MANUAL-DYE-10000', lotId: acceptanceReceipt.reference, quantity: '10000' }
+    const acceptanceReturn = {
+      kind: 'return', reference: 'MANUAL-RET-10000', jobId: acceptanceDispatch.reference, unit,
+      dyed: '9400', damaged: '0', rejected: '0', lost: '600',
+    }
+    assert.equal((await postWarehouse(acceptanceReceipt)).status, 201)
+    assert.equal((await postWarehouse(acceptanceDispatch)).status, 201)
+    assert.equal((await postWarehouse(acceptanceReturn)).status, 400)
+    assert.equal((await warehouseJobs.findOne({ _id: acceptanceDispatch.reference })).outstandingUm, 10000000000)
+    const acceptedReturn = { ...acceptanceReturn, reason: 'Fixture processing loss' }
+    assert.equal((await postWarehouse(acceptedReturn)).status, 201)
+    assert.equal((await postWarehouse(acceptedReturn)).status, 200)
+    const acceptedLot = await warehouseLots.findOne({ _id: acceptanceReceipt.reference })
+    assert.deepEqual(acceptedLot.balances, { greige: 0, processor: 0, dyed: 9400000000, damaged: 0, rejected: 0, lost: 600000000 })
+    assert.equal((await warehouseJobs.findOne({ _id: acceptanceDispatch.reference })).outstandingUm, 0)
+    const acceptedDashboard = await (await request('warehouse', { cookie })).json()
+    assert.ok(!acceptedDashboard.jobs.some(job => job._id === acceptanceDispatch.reference))
+    const returnedMovement = acceptedDashboard.events.find(event => event._id === 'return:' + acceptanceReturn.reference)
+    assert.ok(returnedMovement.processor)
+    assert.equal(returnedMovement.reason, acceptedReturn.reason)
     assert.equal(Object.values(reconciled).reduce((sum, um) => sum + um, 0), 500000000)
 
     const productionLot = 'PRODUCTION-LOT-180'

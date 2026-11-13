@@ -146,6 +146,9 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
     const postDocument = page.getByRole('button', { name: 'Save warehouse document', exact: true })
     await warehouseReference.fill('BROWSER-RETURN-10')
     await warehouseJob.fill('DYE-300')
+    await page.locator('input[name=lost]').fill('600')
+    assert.equal(await page.locator('input[name=reason]').evaluate(input => input.validity.valueMissing), true)
+    await page.locator('input[name=lost]').fill('0')
     await dyedLength.fill('121')
     await postDocument.click()
     await page.getByText('Return exceeds outstanding fabric', { exact: true }).waitFor()
@@ -216,7 +219,7 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
     assert.equal(outstanding, 109000000)
 
     await page.setViewportSize({ width: 1280, height: 720 })
-    await page.getByRole('link', { name: 'Cutting and finished inventory' }).click()
+    await page.getByRole('link', { name: 'Allocate for cutting' }).click()
     await page.getByRole('heading', { name: 'Finished inventory', exact: true }).waitFor()
     await page.getByText('THAAN-C1', { exact: true }).waitFor()
     const productionScreenshots = process.env.PHASE2B_SCREENSHOTS
@@ -229,7 +232,7 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
       await page.getByText('Production document posted.', { exact: true }).waitFor()
     }
     await page.getByLabel('Document reference').fill('MOBILE-CUT')
-    await page.getByLabel('Dyed lot reference').fill('LOT-500')
+    await page.getByLabel('Available dyed lot').selectOption('LOT-500')
     await page.getByLabel('Allocation (meters)').fill('6')
     await submitProduction()
     await selectAction('Complete cutting')
@@ -266,6 +269,25 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
     assert.equal((await readFile(await download.path())).subarray(0, 5).toString(), '%PDF-')
 
     await page.goto(origin + '/ledger')
+    await page.getByRole('heading', { name: 'Customer statements' }).waitFor()
+    await page.getByRole('link', { name: 'Customer Statements' }).waitFor()
+    await page.locator('input[type=date]').first().fill('2025-01-01')
+    await page.locator('input[type=date]').last().fill('2025-01-31')
+    await page.locator('select').first().selectOption({ label: 'Fixture account (party)' })
+    await page.getByText('Fixture idempotent ledger row', { exact: true }).waitFor()
+    const statementScreenshots = process.env.PHASE2A_SCREENSHOTS
+    if (statementScreenshots) await page.screenshot({ path: statementScreenshots + '/customer-statement-desktop.png', fullPage: true })
+    await page.setViewportSize({ width: 390, height: 844 })
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true)
+    if (statementScreenshots) await page.screenshot({ path: statementScreenshots + '/customer-statement-mobile.png', fullPage: true })
+    await page.setViewportSize({ width: 1280, height: 720 })
+    for (const [paper, width, height] of [['A4', 595, 842], ['A5', 420, 595]]) {
+      await page.getByLabel('Print size').selectOption(paper)
+      const pdf = Buffer.from(await page.pdf({ preferCSSPageSize: true })).toString('latin1')
+      const mediaBox = pdf.match(/\/MediaBox\s*\[0 0 ([\d.]+) ([\d.]+)\]/)
+      assert.ok(mediaBox, paper + ' page box missing')
+      assert.ok(Math.abs(Number(mediaBox[1]) - width) < 4 && Math.abs(Number(mediaBox[2]) - height) < 4, paper + ': ' + mediaBox[0])
+    }
     await page.getByRole('button', { name: 'Print', exact: true }).click()
     await page.locator('body[data-print-called=yes]').waitFor()
 

@@ -10,7 +10,7 @@ type Data = {
   balances: { _id: { stage: string; currency: string }; um: string; valueNumerator: string }[]
   lots: { _id: string; fabric: string; supplier: string; balances: Record<string, number> }[]
   jobs: { _id: string; lotId: string; processor: string; outstandingUm: number }[]
-  events: { _id: string; lotId: string; jobId?: string; postedAt: string; reason?: string; legs: { to: string; um: number }[] }[]
+  events: { _id: string; lotId: string; jobId?: string; processor?: string; postedAt: string; reason?: string; legs: { from: string; to: string; um: number }[] }[]
   accounts: { _id: string; name: string; kind?: ContactKind }[]
   outstandingJobs: number
   canPost: boolean
@@ -30,6 +30,7 @@ export default function WarehousePage() {
   const [kind, setKind] = useState<Kind>('receipt')
   const [notice, setNotice] = useState('')
   const [saving, setSaving] = useState(false)
+  const [exception, setException] = useState(false)
   const lock = useRef(false)
 
   async function refresh() {
@@ -75,6 +76,7 @@ export default function WarehousePage() {
         throw new Error('Posting confirmation unavailable')
       }
       form.reset()
+      setException(false)
       setNotice(response.status === 200 ? 'This document was already posted.' : 'Warehouse document posted successfully.')
       await refresh().catch(() => {
         setNotice('Document posted successfully, but warehouse data could not be refreshed.')
@@ -106,7 +108,11 @@ export default function WarehousePage() {
         <p className="text-xs font-semibold tracking-widest text-blue-200 uppercase">OarLinks / Warehouse</p>
         <h1 className="mt-2 text-3xl font-semibold">Fabric Warehouse</h1>
         <p className="mt-2 text-sm text-slate-300">Record raw fabric received, fabric sent for dyeing and dyed fabric returned.</p>
-        <Link href="/admin/warehouse/production" className="mt-4 inline-block rounded-lg bg-white px-3 py-2 text-sm font-semibold text-slate-900">Cutting and finished inventory</Link>
+        <div className="mt-4 flex flex-wrap gap-4">
+          <Link href="/admin/warehouse/production" className="underline">Allocate for cutting</Link>
+          <Link href="/admin/warehouse/production#finished-inventory" className="underline">Finished suits and thaans</Link>
+        </div>
+        <p className="mt-2 text-sm text-slate-300">Other Product Inventory tracks a separate stock system. Textile quantities are not included there.</p>
       </header>
       <p role="status" className="text-sm text-slate-700">{notice || (!data && 'Loading warehouse...')}</p>
       {data && <>
@@ -125,11 +131,15 @@ export default function WarehousePage() {
           <p className="mt-1 text-sm text-slate-600">Use one unique challan/document number for each receiving, dispatch or return. The same number and details can be retried safely.</p>
           <div className="my-3 flex flex-wrap gap-2">
             {(Object.keys(actions) as Kind[]).map(action => (
-              <button key={action} type="button" aria-pressed={kind === action} disabled={saving} onClick={() => setKind(action)}
+              <button key={action} type="button" aria-pressed={kind === action} disabled={saving} onClick={() => { if (kind !== action) setException(false); setKind(action) }}
                 className={'rounded-lg border px-3 py-2 text-sm ' + (kind === action ? 'border-blue-700 bg-blue-700 text-white' : 'border-slate-300')}>{actions[action]}</button>
             ))}
           </div>
-          <form key={kind} onSubmit={post}>
+          <form key={kind} onSubmit={post} onChange={event => {
+            if (kind !== 'return') return
+            const values = new FormData(event.currentTarget)
+            setException(['damaged', 'rejected', 'lost'].some(field => Number(values.get(field)) > 0))
+          }}>
             <fieldset disabled={saving} className="grid gap-3 sm:grid-cols-2">
               <label className="text-sm">Challan / Document number
                 <input className={fields} name="reference" maxLength={64} placeholder={kind === 'receipt' ? 'e.g. GR-20261112-001' : kind === 'dispatch' ? 'e.g. DYE-20261112-001' : 'e.g. RET-20261112-001'} required />
@@ -166,7 +176,7 @@ export default function WarehousePage() {
                   <datalist id="dyeing-jobs">{data.jobs.map(job => <option key={job._id} value={job._id}>{job.processor} ({meters(job.outstandingUm)})</option>)}</datalist>
                 </label>
                 {['dyed', 'damaged', 'rejected', 'lost'].map(stage => <label key={stage} className="text-sm capitalize">{stage} length<input className={fields} name={stage} defaultValue="0" inputMode="decimal" required /></label>)}
-                <label className="text-sm">Reason for loss, damage or rejection<input className={fields} name="reason" maxLength={500} /></label>
+                <label className="text-sm">Reason for loss, damage or rejection (required when reported)<input className={fields} name="reason" maxLength={500} required={exception} /></label>
               </>}
               <div className="sm:col-span-2"><button className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" type="submit">{saving ? 'Saving...' : 'Save warehouse document'}</button></div>
             </fieldset>
@@ -189,10 +199,11 @@ export default function WarehousePage() {
           <ul className="mt-2 divide-y divide-slate-100">{data.lots.map(lot => <li key={lot._id} className="py-2 text-sm break-words"><strong>{lot._id}</strong> / {lot.fabric} / {lot.supplier}<p className="text-slate-600">{Object.entries(lot.balances).filter(([, um]) => um > 0).map(([stage, um]) => stage + ': ' + meters(um)).join(' / ')}</p></li>)}</ul>
         </section>
         <section className={card}>
-          <h2 className="text-lg font-semibold">Recent activity and material exceptions</h2>
+          <h2 className="text-lg font-semibold">Fabric Movement History</h2>
+          <p className="text-sm text-slate-600">Up to 100 recent posted challans, including completed jobs and losses.</p>
           {!data.events.length && <p className="text-sm text-slate-600">No warehouse movements yet.</p>}
-          <ul className="mt-2 divide-y divide-slate-100">{data.events.map(movement => <li key={movement._id} className="py-2 text-sm break-words"><strong>{movement._id}</strong> / Lot {movement.lotId}{movement.jobId && ' / Job ' + movement.jobId}
-            <p className="text-slate-600">{movement.legs.map(leg => leg.to + ': ' + meters(leg.um)).join(' / ')}{movement.reason && ' / ' + movement.reason}</p>
+          <ul className="mt-2 divide-y divide-slate-100">{data.events.map(movement => <li key={movement._id} className="py-2 text-sm break-words"><strong>{movement._id}</strong> / Lot {movement.lotId}{movement.jobId && ' / Job ' + movement.jobId}{movement.processor && ' / ' + movement.processor} <span className="text-green-800">· Posted</span>
+            <p className="text-slate-600">{movement.legs.map(leg => leg.from + ' → ' + leg.to + ': ' + meters(leg.um)).join(' / ')}{movement.reason && ' / ' + movement.reason}</p>
             <time className="text-xs text-slate-500" dateTime={movement.postedAt}>{new Date(movement.postedAt).toLocaleString()}</time></li>)}</ul>
         </section>
       </>}

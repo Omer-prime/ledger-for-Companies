@@ -24,6 +24,7 @@ type Props = {
   rows: Row[]
   totals: Tot[]
   period: Period // 'day' or 'month'
+  timeZone?: string
   onDelete?: (id: string) => void | Promise<void> // NEW: show actions column when provided
 }
 
@@ -42,7 +43,10 @@ function getMeta(meta: Record<string, unknown> | undefined, path: string): unkno
   return cur
 }
 
-export default function LedgerTable({ columns, rows, totals, period, onDelete }: Props) {
+export default function LedgerTable({ columns, rows, totals, period, timeZone, onDelete }: Props) {
+  const formatter = timeZone && new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' })
+  const day = (date: string | Date) => formatter ? formatter.format(new Date(date)) : dayjs(date).format('YYYY-MM-DD')
+  const group = (date: string | Date) => day(date).slice(0, period === 'day' ? 10 : 7)
   const totalsByKey = React.useMemo(() => {
     const m = new Map<string, Tot>()
     for (const t of totals) m.set(t.key, t)
@@ -93,13 +97,8 @@ export default function LedgerTable({ columns, rows, totals, period, onDelete }:
 
         <tbody>
           {rows.map((r, idx) => {
-            const thisKey = period === 'day' ? dayjs(r.date).format('YYYY-MM-DD') : dayjs(r.date).format('YYYY-MM')
-            const nextKey =
-              idx < rows.length - 1
-                ? period === 'day'
-                  ? dayjs(rows[idx + 1].date).format('YYYY-MM-DD')
-                  : dayjs(rows[idx + 1].date).format('YYYY-MM')
-                : null
+            const thisKey = group(r.date)
+            const nextKey = idx < rows.length - 1 ? group(rows[idx + 1].date) : null
 
             const isLastOfPeriod = !nextKey || nextKey !== thisKey
             const total = totalsByKey.get(thisKey)
@@ -113,7 +112,7 @@ export default function LedgerTable({ columns, rows, totals, period, onDelete }:
                     if (c.key.startsWith('meta.')) {
                       value = getMeta(r.meta, c.key.slice('meta.'.length))
                     } else if (c.key === 'date') {
-                      value = dayjs(r.date).format('DD/MM/YYYY')
+                      value = day(r.date).split('-').reverse().join('/')
                     } else {
                       value = (r as unknown as Record<string, unknown>)[c.key]
                     }
