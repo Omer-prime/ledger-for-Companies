@@ -295,9 +295,22 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
     await page.getByRole('button', { name: 'Print', exact: true }).click()
     await page.locator('body[data-print-called=yes]').waitFor()
 
+    await page.goto(origin + '/admin/shop-setup')
+    await page.getByRole('heading', { name: 'Set up your shop' }).waitFor()
+    await page.getByRole('link', { name: /Financial accounts and approval/ }).click()
+    await page.getByRole('button', { name: 'Create Cash on hand' }).click()
+    await page.getByText(/Cash on hand is available to select/).waitFor()
+    await page.goto(origin + '/admin/opening-stock')
+    await page.getByLabel('Batch reference').fill('BROWSER-OPENING')
+    await page.getByLabel('Physical count date').fill('2025-01-02')
+    await page.getByLabel('CSV rows').fill('identifier,kind,fabric,design,size,grade,suits,meters,costPkr,sellingPricePkr,source,evidence\nSHOP-001,full,Cotton,Blue,,A,4,6,2400,,Fixture opening count,Invoice 123')
+    await page.getByRole('button', {name:'Preview import'}).click()
+    await page.getByRole('button', {name:'Confirm import'}).click()
+    await page.getByText(/Awaiting verification/).waitFor()
+
     // A disposable posted document exercises the actual POS print buttons.
     const printConnection = await mongoose.createConnection('mongodb://127.0.0.1:37171/?replicaSet=phase0&directConnection=true', {
-      dbName: 'oarlinks_phase0_fixture', serverSelectionTimeoutMS: 5000,
+      dbName: 'oarlinks_disposable_onboarding_phase0', serverSelectionTimeoutMS: 5000,
     }).asPromise()
     try {
       const keys = ['cash','bank','receivables','revenue','finishedInventory','cogs']
@@ -388,13 +401,15 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
     await login('phase0-admin@example.test', 'fixture-only long password')
     assert.notEqual((await authCookie()).value, initial.value)
     connection = await mongoose.createConnection('mongodb://127.0.0.1:37171/?replicaSet=phase0&directConnection=true', {
-      dbName: 'oarlinks_phase0_fixture', serverSelectionTimeoutMS: 5000,
+      dbName: 'oarlinks_disposable_onboarding_phase0', serverSelectionTimeoutMS: 5000,
     }).asPromise()
     await connection.db.collection('auth_sessions').updateMany({}, { $set: { expiresAt: new Date(0) } })
     await page.goto(origin + '/admin/inventory')
     await page.waitForURL(origin + '/admin/login')
     await login('phase0-member@example.test', 'fixture-only replacement password')
     assert.equal(await page.evaluate(async () => (await fetch('/api/users')).status), 403)
+    assert.equal(await page.evaluate(async () => (await fetch('/api/opening-stock')).status), 403)
+    assert.equal(await page.evaluate(async () => (await fetch('/api/pos-accounting',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).status),403)
     assert.equal(await page.evaluate(async () => (await fetch('/api/pos-accounting', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ revision: 1, approval: null }),
     })).status), 403)

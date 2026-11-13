@@ -39,7 +39,7 @@ const payment = z.strictObject({
 })
 const requestSchema = z.union([sale, payment])
 
-type Item = { id: string; grade: string; suits: number; totalUm: number; fullThaan?: boolean; lotId?: string; orderId?: string; batchId?: string; costPaisa?: number }
+type Item = { id: string; grade: string; suits: number; totalUm: number; fullThaan?: boolean; lotId?: string; orderId?: string; batchId?: string; costPaisa?: number; fabric?: string; openingKind?: string }
 type SaleRecord = {
   _id: string; kind: 'sale' | 'payment'; reference: string;
   partyId?: string; partyName: string; walkIn: boolean;
@@ -90,7 +90,10 @@ export const GET = safeApi(async function GET(req: Request) {
   const records = conn.collection<SaleRecord>('checkout_documents')
   const cashbook = conn.collection<Receipt>('checkout_receipts')
   const parties = await accounts.find(activeCustomer, {projection: {name:1}}).sort({name:1}).limit(300).toArray()
-  const available = await thaans.find({ saleId: { $exists: false } }).sort({ postedAt: -1 }).limit(500).toArray()
+  const approval = (await posAccounting(conn).findOne({}, { sort: { _id: -1 } }))?.approval
+  const available = await thaans.find({ saleId: { $exists: false }, $or:[
+    {opening:{$exists:false}}, {'opening.reference':{$in:approval?.capitalizedOpeningIds??[]}},
+  ] }).sort({ postedAt: -1 }).limit(500).toArray()
   const recent = await records.find({}, { projection: { fingerprint: 0 } }).sort({ postedAt: -1 }).limit(60).toArray()
   // Full daily document register for small-shop use. Reject silent truncation in the UI.
   const dailyCount = await records.countDocuments({ date: day })
@@ -135,13 +138,13 @@ export const GET = safeApi(async function GET(req: Request) {
   const customerHistory = wanted ? await records.find({ partyId: wanted.toLowerCase() }, { projection: { fingerprint: 0 } })
     .sort({ postedAt: -1, _id: -1 }).limit(100).toArray() : []
   return Response.json({
-    accountingApproved: Boolean((await posAccounting(conn).findOne({}, { sort: { _id: -1 } }))?.approval),
+    accountingApproved: Boolean(approval),
     businessName: settings.profile.name, businessDay, volume: volume ?? { suitsSold: 0, soldUm: '0', fullThaans: 0 },
     customerHistory,
     parties:parties.map(p => ({id:String(p._id),name:p.name})),
     thaans:available.map(t => {
       const remaining = Math.max(0, t.suits - (t.soldSuits ?? 0))
-      return {id:t._id,suits:remaining,totalUm:remaining * (t.totalUm / t.suits),grade:t.contents.map(i=>i.grade).join('/')}
+      return {id:t._id,suits:remaining,totalUm:remaining * (t.totalUm / t.suits),grade:t.contents.map(i=>i.grade).join('/'),fabric:t.opening?.fabric,openingKind:t.opening?.kind}
     }).filter(t => t.suits > 0),
     recent, due, day, dailyCount, dailyDocuments, receipts,
     totals:totals[0] ?? {saleTotal:0,sales:0,walkInSales:0,paidAtSale:0,paymentsAgainstDue:0,newUdhar:0,cashReceived:0,bankReceived:0},
@@ -164,7 +167,7 @@ export const POST = safeApi(async function POST(req: Request) {
   const accounts = conn.collection<Party>('accounts')
   const receipts = conn.collection<Receipt>('checkout_receipts')
   const transactions = conn.collection('transactions')
-  const { thaans, orders } = textileProduction(conn)
+  const { thaans, orders, openingBatches } = textileProduction(conn)
   const { lots } = warehouse(conn)
   const id = doc.kind + ':' + doc.reference
   const fingerprint = createHash('sha256').update(JSON.stringify(doc)).digest('hex')
@@ -219,8 +222,12 @@ export const POST = safeApi(async function POST(req: Request) {
           // Legacy thaanIds means 'sell every remaining suit' (original full-thaan behavior).
           const current = await thaans.findOne({_id:line.thaanId,saleId:{$exists:false}}, {session})
           if (!current) throw new BusinessError(409, 'Thaan unavailable or already sold: '+line.thaanId)
-          if (!revision.approval.capitalizedOrderIds?.includes(current.orderId)) {
+          if (!current.opening && !revision.approval.capitalizedOrderIds?.includes(current.orderId)) {
             throw new BusinessError(409, 'Finished inventory capitalization has not been approved for cutting order ' + current.orderId)
+          }
+          if (current.opening && (!revision.approval.capitalizedOpeningIds?.includes(current.opening.reference) ||
+              !await openingBatches.findOne({_id:current.opening.reference,verified:{$exists:true}},{session}))) {
+            throw new BusinessError(409,'Opening stock count, cost and capitalization must be approved')
           }
           const existingSold = current.soldSuits ?? 0
           const available = current.suits - existingSold
@@ -239,6 +246,15 @@ export const POST = safeApi(async function POST(req: Request) {
           }
           const um = count * (updated.totalUm / updated.suits)
           if (!Number.isSafeInteger(um)) throw new BusinessError(409,'Suit length cannot be represented exactly')
+          let itemCost: number
+          let fabric: string | undefined
+          if(updated.opening) {
+            const cost=updated.opening.costPaisa
+            if(updated.opening.currency!=='PKR'||!cost||!Number.isSafeInteger(cost)||cost<1) throw new BusinessError(409,'Verified opening cost is unavailable')
+            const portion=(suits:number)=>(BigInt(cost)*BigInt(suits)*BigInt(2)+BigInt(updated.suits))/(BigInt(2)*BigInt(updated.suits))
+            itemCost=Number(portion(existingSold+count)-portion(existingSold))
+            fabric=updated.opening.fabric
+          } else {
           const order = await orders.findOne({ _id: updated.orderId, lotId: updated.lotId }, { session })
           const lot = await lots.findOne({ _id: updated.lotId }, { session })
           if (!order?.completion || order.completion.batchId !== updated.batchId ||
@@ -247,19 +263,20 @@ export const POST = safeApi(async function POST(req: Request) {
               order.currency !== 'PKR' || lot?.currency !== 'PKR' || lot.minorPerMeter !== order.minorPerMeter) {
             throw new BusinessError(409, 'Verified PKR lot and cutting cost are unavailable for thaan ' + line.thaanId)
           }
-          let itemCost: number
+          fabric=lot.fabric
           try {
             itemCost = rawMaterialCost(order.minorPerMeter, updated.suitLengthUm, existingSold, count)
           } catch {
             throw new BusinessError(409, 'Verified positive PKR cost is unavailable for thaan ' + line.thaanId)
+          }
           }
           costPaisa += itemCost
           if (!Number.isSafeInteger(costPaisa)) throw new BusinessError(409, 'Sale inventory cost exceeds the supported amount')
           items.push({
             id: updated._id, grade: updated.contents.map(item => item.grade).join('/'), suits: count, totalUm: um,
             lotId: updated.lotId, orderId: updated.orderId, batchId: updated.batchId,
-            costPaisa: itemCost,
-            fullThaan: existingSold === 0 && count === updated.suits && count === updated.defaultTargetSuits,
+            costPaisa: itemCost, fabric, openingKind:updated.opening?.kind,
+            fullThaan: (!updated.opening || updated.opening.kind==='full') && existingSold === 0 && count === updated.suits && count === updated.defaultTargetSuits,
           })
         }
         if (customer) {

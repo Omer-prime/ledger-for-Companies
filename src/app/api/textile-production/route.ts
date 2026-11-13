@@ -1,3 +1,4 @@
+import { posAccounting } from '@/lib/pos-accounting'
 import { z } from 'zod'
 import { apiError, readBody, requirePermission, safeApi, text } from '@/lib/api-security'
 import { digest, getSession } from '@/lib/auth'
@@ -41,12 +42,19 @@ export const GET = safeApi(async function GET() {
     const totals = { full: 0, partial: 0, nonstandard: 0, soldThaans: 0, soldSuits: 0, packedSuits: 0, unpacked: 0, pending: 0, quarantined: 0 }
     const byGrade: Record<string, number> = {}
     const byLot = new Map<string, { lotId: string; um: bigint }>()
+    const approval=(await posAccounting(connection).findOne({}, {session,sort:{_id:-1}}))?.approval
+    const openingStock=[]
     for await (const order of orders.find({}, { session })) {
       totals.pending += order.unclassified
       totals.quarantined += order.completion?.quarantined ?? 0
       for (const stock of Object.values(order.grades)) totals.unpacked += stock.pending
     }
     for await (const thaan of thaans.find({}, { session })) {
+      if(thaan.opening) {
+        openingStock.push({_id:thaan._id,fabric:thaan.opening.fabric,kind:thaan.opening.kind,batchId:thaan.opening.reference,
+          available:thaan.saleId?0:thaan.suits-(thaan.soldSuits??0),approved:approval?.capitalizedOpeningIds?.includes(thaan.opening.reference)??false})
+        continue
+      }
       const soldCount = thaan.saleId ? thaan.suits : (thaan.soldSuits ?? 0)
       totals.soldSuits += soldCount
       if (thaan.saleId) totals.soldThaans++
@@ -63,12 +71,12 @@ export const GET = safeApi(async function GET() {
       byLot.set(thaan.lotId, lot)
     }
     return {
-      canPost: Boolean(actor && actor.role !== 'accountant'), totals, byGrade,
+      canPost: Boolean(actor && actor.role !== 'accountant'), totals, byGrade, openingStock,
       byLot: [...byLot.values()].map(lot => ({ lotId: lot.lotId, um: String(lot.um) })),
       configuration: { grades: configuration.grades.filter(item => item.enabled), thaan: configuration.thaan },
       lots: await lots.find({ 'balances.dyed': { $gt: 0 } }, { session }).sort({ postedAt: -1, _id: 1 }).limit(100).toArray(),
       orders: await orders.find({}, { session }).sort({ createdAt: -1, _id: 1 }).limit(100).toArray(),
-      thaans: await thaans.find({}, { session }).sort({ postedAt: -1, _id: 1 }).limit(100).toArray(),
+      thaans: await thaans.find({opening:{$exists:false}}, { session }).sort({ postedAt: -1, _id: 1 }).limit(100).toArray(),
       events: await events.find({}, { session, projection: { fingerprint: 0 } }).sort({ postedAt: -1, _id: 1 }).limit(100).toArray(),
     }
   }, { readConcern: { level: 'snapshot' } })

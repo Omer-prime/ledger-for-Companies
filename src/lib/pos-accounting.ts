@@ -11,6 +11,8 @@ export const approvalSchema = z.strictObject({
     businessApprovalReference: z.string().trim().min(3).max(200),
     capitalizedOrderIds: z.array(z.string().regex(/^[A-Z0-9][A-Z0-9._/-]{0,63}$/)).max(1000)
       .refine(values => new Set(values).size === values.length),
+    capitalizedOpeningIds: z.array(z.string().regex(/^[A-Z0-9][A-Z0-9._/-]{0,63}$/)).max(500)
+      .refine(values => new Set(values).size === values.length).optional(),
     reconciledAndCapitalized: z.literal(true),
     noTaxDiscountsOrReturns: z.literal(true),
   }).nullable(),

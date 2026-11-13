@@ -5,7 +5,7 @@ import mongoose from 'mongoose'
 import { hashPassword } from '../src/lib/password.ts'
 
 const uri='mongodb://127.0.0.1:37171/?replicaSet=phase0&directConnection=true'
-const database='oarlinks_suit_acceptance_20261112'
+const database='oarlinks_disposable_onboarding_suits'
 const origin='http://127.0.0.1:37177'
 
 // Requires a FRESH dedicated fixture DB. Never drops or cleans business databases.
@@ -176,5 +176,44 @@ test('POS integration: registered credit/cash/partial, walk-in, repayment, daily
     assert.equal((await post(mixedBase)).status,409)
     assert.equal((await post({...mixedBase,reference:'POS-MIXED-ALL',lines:[{thaanId:'POS-MIXED',suits:4}],total:4000,paid:4000})).status,201)
 
+    const guided=(role)=>send('pos-accounting',{method:'POST',cookie,body:{role,name:'DEMO guided '+role}})
+    const guidedCash=await (await guided('cash')).json()
+    assert.equal((await (await guided('cash')).json())._id,guidedCash._id)
+    assert.equal(await accounts.countDocuments({'meta.posRole':'cash'}),1)
+    const opening=(body)=>send('opening-stock',{method:'POST',body,cookie})
+    const row={kind:'full',fabric:'Demo cotton',design:'Blue',size:'',grade:'A',suits:4,suitLengthUm:6000000,costPaisa:240000,source:'Fixture counted stock',evidence:'Fixture invoice'}
+    const batch={action:'import',reference:'DEMO-OPEN',countDate:day,rows:[
+      {...row,identifier:'OPEN-FULL'}, {...row,identifier:'OPEN-FULL2'}, {...row,identifier:'OPEN-PART',kind:'partial',suits:2,costPaisa:120000},
+      {...row,identifier:'OPEN-LOOSE',kind:'loose',suits:1,costPaisa:60000},
+    ]}
+    assert.equal((await opening({...batch,preview:true,rows:[{...row,identifier:'INVALID',suits:3}]})).status,400)
+    assert.equal((await opening({...batch,preview:true})).status,200)
+    assert.equal(await thaans.countDocuments({'opening.reference':'DEMO-OPEN'}),0)
+    assert.equal((await opening(batch)).status,201)
+    assert.equal((await opening(batch)).status,200)
+    const sell=(ref,id,suits,extra={})=>post({kind:'sale',reference:ref,date:day,lines:[{thaanId:id,suits}],total:3000,paid:3000,method:'cash',...extra})
+    assert.equal((await sell('OPEN-01','OPEN-LOOSE',1)).status,409)
+    const config=await (await send('pos-accounting',{cookie})).json()
+    assert.equal((await send('pos-accounting',{method:'PUT',cookie,body:{revision:config.revision,approval:{...config.approval,accounts:{...config.approval.accounts,bank:guidedCash._id}}}})).status,400)
+    const approve=()=>send('pos-accounting',{method:'PUT',cookie,body:{revision:config.revision,approval:{...config.approval,capitalizedOpeningIds:['DEMO-OPEN']}}})
+    assert.equal((await approve()).status,400)
+    assert.equal((await opening({action:'verify',reference:'DEMO-OPEN',verificationReference:'Fixture count and cost confirmed'})).status,200)
+    assert.equal((await approve()).status,200)
+    assert.equal((await sell('OPEN-01','OPEN-LOOSE',1)).status,201)
+    assert.equal((await sell('OPEN-02','OPEN-FULL',1)).status,201)
+    assert.equal((await sell('OPEN-03','OPEN-FULL2',4)).status,201)
+    assert.equal((await sell('OPEN-04','OPEN-PART',1,{partyId,paid:1000})).status,201)
+    const remaining=await (await send('checkout?date='+day,{cookie})).json()
+    assert.equal(remaining.thaans.find(item=>item.id==='OPEN-FULL').suits,3)
+    assert.equal(remaining.thaans.find(item=>item.id==='OPEN-PART').suits,1)
+    assert.equal(remaining.thaans.some(item=>['OPEN-LOOSE','OPEN-FULL2'].includes(item.id)),false)
+    const sale=await docs.findOne({_id:'sale:OPEN-02'})
+    assert.equal(sale.costPaisa,60000)
+    const linked=await db.collection('journal_entries').findOne({_id:sale.journalId})
+    assert.equal(linked.lines.reduce((sum,line)=>sum+line.debitPaisa-line.creditPaisa,0),0)
+    assert.equal(await db.collection('journal_entries').countDocuments({'source.documentId':/^sale:OPEN-/}),4)
+    const race=await Promise.all([sell('OPEN-RACE1','OPEN-PART',1),sell('OPEN-RACE2','OPEN-PART',1)])
+    assert.equal(race.filter(result=>result.status===201).length,1)
+    assert.equal((await thaans.findOne({_id:'OPEN-PART'})).soldSuits,2)
   }finally{await conn.close()}
 })

@@ -1,4 +1,5 @@
 import type { Connection } from 'mongoose'
+import type { OpeningOrigin } from '@/lib/opening-stock'
 
 export type GradeStock = { pending: number; packed: number; label: string }
 export type CuttingOrder = {
@@ -24,6 +25,7 @@ export type CuttingOrder = {
   grades: Record<string, GradeStock>
 }
 export type Thaan = {
+  opening?: OpeningOrigin
   _id: string
   soldSuits?: number
   saleId?: string
@@ -57,5 +59,6 @@ export function textileProduction(connection: Connection) {
     orders: connection.collection<CuttingOrder>('textile_cutting_orders'),
     thaans: connection.collection<Thaan>('textile_thaans'),
     events: connection.collection<ProductionMovement>('textile_production_movements'),
+    openingBatches: connection.collection<{ _id: string; fingerprint: string; countDate: string; actor: string; postedAt: Date; verified?: { actor: string; reference: string; at: Date; fingerprint: string } }>('textile_opening_batches'),
   }
 }

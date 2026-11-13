@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { formatMicrometers } from '@/lib/warehouse-values'
 import { code128Bars, code128Width } from '@/lib/code128'
 
-type Item = { id:string; grade:string; suits:number; totalUm:number }
+type Item = { id:string; grade:string; suits:number; totalUm:number; fabric?:string; openingKind?:string }
 type Doc = { _id:string;kind:'sale'|'payment';reference:string;partyId?:string;partyName:string;walkIn?:boolean;
   date:string;actor:string;postedAt:string;total:number;paid:number;method?:'cash'|'bank';items:Item[] }
 type Receipt = { _id:string;reference:string;partyName:string;amount:number;method:'cash'|'bank';kind:string;date:string }
@@ -38,8 +38,8 @@ function barcodeSvg(value:string){
 }
 function receiptHtml(d:Doc,businessName:string){
   const due=d.kind==='sale'?d.total-d.paid:0
-  const details=d.items.map(i=>`<tr><td>${esc(i.id)}</td><td>${esc(i.grade)}</td><td class="right">${i.suits}</td><td class="right">${(i.totalUm/1e6).toLocaleString('en-PK')} m</td></tr>`).join('')
-  return `<h1>${esc(businessName)}</h1><p><b>${d.kind==='sale'?'SALE RECEIPT':'UDHAR PAYMENT RECEIPT'}</b> — ${esc(d.reference)}</p><p>Customer: ${esc(d.partyName)}${d.walkIn?' (Walk-in)':''}</p><p>Date: ${esc(d.date)} · Operator: ${esc(d.actor ?? '')}</p>${d.kind==='sale'?`<table><thead><tr><th>Thaan</th><th>Grade</th><th>Suits</th><th>Length</th></tr></thead><tbody>${details}</tbody></table><p>Sale value: <b>${money(d.total)}</b></p>`:''}<p>Payment received: <b>${money(d.paid)}</b> ${d.method?'via '+esc(d.method):''}</p>${d.kind==='sale'?`<p>New Udhar from this sale: <b>${money(due)}</b></p>`:'<p>Payment applied against existing Udhar.</p>'}<p class="small muted">Reference: ${esc(d._id)} · Customer copy</p>`
+  const details=d.items.map(i=>`<tr><td>${esc(i.id)}${i.fabric ? "<br>"+esc(i.fabric) : ""}</td><td>${esc(i.grade)}</td><td class="right">${i.suits}</td><td class="right">${(i.totalUm/1e6).toLocaleString('en-PK')} m</td></tr>`).join('')
+  return `<h1>${esc(businessName)}</h1><p><b>${d.kind==='sale'?'SALE RECEIPT':'UDHAR PAYMENT RECEIPT'}</b> — ${esc(d.reference)}</p><p>Customer: ${esc(d.partyName)}${d.walkIn?' (Walk-in)':''}</p><p>Date: ${esc(d.date)} · Operator: ${esc(d.actor ?? '')}</p>${d.kind==='sale'?`<table><thead><tr><th>Stock / fabric</th><th>Grade</th><th>Suits</th><th>Length</th></tr></thead><tbody>${details}</tbody></table><p>Sale value: <b>${money(d.total)}</b></p>${d.items.length===1&&d.items[0].suits>0?`<p>Unit sale value: ${money(d.total/d.items[0].suits)}</p>`:""}`:''}<p>Payment received: <b>${money(d.paid)}</b> ${d.method?'via '+esc(d.method):''}</p>${d.kind==='sale'?`<p>New Udhar from this sale: <b>${money(due)}</b></p>`:'<p>Payment applied against existing Udhar.</p>'}<p class="small muted">Reference: ${esc(d._id)} · Customer copy</p>`
 }
 function dailyHtml(d:Data){
   const t=d.totals
@@ -161,7 +161,7 @@ export default function CheckoutPage(){
         <p className="text-sm text-slate-600">Tick a thaan, then enter how many suits to sell. Choose 1 for a walk-in buying one suit, or the full available quantity for the whole thaan.</p>
         <div className="max-h-64 overflow-y-auto rounded-lg border p-2">{!data?.thaans.length&&<p className="text-sm">No available finished suits. Pack stock in Warehouse → Production first.</p>}{data?.thaans.map(item=><div key={item.id} className="flex flex-wrap items-center gap-3 border-b p-2 text-sm">
           <label className="flex min-w-0 flex-1 items-center gap-2"><input type="checkbox" checked={selected.includes(item.id)} onChange={e=>{setSelected(current=>e.target.checked?[...current,item.id]:current.filter(x=>x!==item.id));if(e.target.checked)setQuantityByThaan(current=>({...current,[item.id]:current[item.id]??1}))}}/>
-            <span>{item.id} · Grade {item.grade} · {item.suits} suits left · {(item.totalUm/1e6).toLocaleString('en-PK')} m left</span></label>
+            <span>{item.id}{item.fabric && " · " + item.fabric} · Grade {item.grade} · {item.suits} suits left · {(item.totalUm/1e6).toLocaleString('en-PK')} m left</span></label>
           {selected.includes(item.id)&&<div className="flex items-center gap-2"><label className="text-xs">Suits to sell<input aria-label={'Suits to sell from '+item.id} className="ml-2 w-16 rounded border p-1 text-right" type="number" min="1" max={item.suits} step="1" value={quantityByThaan[item.id]??1} onChange={e=>setQuantityByThaan(current=>({...current,[item.id]:Number(e.target.value)}))}/></label><button type="button" className="rounded border px-2 py-1 text-xs" onClick={()=>setQuantityByThaan(current=>({...current,[item.id]:item.suits}))}>All {item.suits}</button></div>}
         </div>)}</div>
         <p className="text-sm font-medium">Selected: {selectedSuits} suit{selectedSuits===1?'':'s'} from {saleLines.length} thaan{saleLines.length===1?'':'s'}. Enter the total selling price for these suits below.</p>

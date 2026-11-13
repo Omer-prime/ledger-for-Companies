@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 
 type Action = 'allocate' | 'complete' | 'grade' | 'regrade' | 'pack'
 type Data = {
+  openingStock: {_id:string;fabric:string;kind:string;batchId:string;available:number;approved:boolean}[]
   canPost: boolean
   totals: { full: number; partial: number; nonstandard: number; soldThaans: number; soldSuits: number; packedSuits: number; unpacked: number; pending: number; quarantined: number }
   byGrade: Record<string, number>
@@ -155,6 +156,7 @@ export default function ProductionPage() {
         </section>}
         <section className={card}>
           <h2 id="finished-inventory" className="text-lg font-semibold">Finished inventory</h2>
+          {data.openingStock.length>0 && <div className="my-3 rounded-lg border p-3"><h3 className="font-semibold">Opening finished stock</h3><ul>{data.openingStock.map(item=><li key={item._id} className="text-sm">{item._id} · {item.fabric} · {item.kind} · Batch {item.batchId} · {item.available} remaining · {item.approved?'Approved':'Pending approval'}</li>)}</ul></div>}
           <dl className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
             {[['Total thaans', data.totals.full + data.totals.partial + data.totals.nonstandard], ['Full thaans', data.totals.full], ['Partial thaans', data.totals.partial], ['Oversize thaans', data.totals.nonstandard], ['Sold thaans', data.totals.soldThaans], ['Sold suits', data.totals.soldSuits],
               ['Packed suits', data.totals.packedSuits], ['Unpacked graded suits', data.totals.unpacked], ['Pending grading', data.totals.pending],

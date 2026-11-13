@@ -1,7 +1,10 @@
-import { apiError, dateOnly, readBody, requirePermission, safeApi } from '@/lib/api-security'
+import { apiError, dateOnly, readBody, requirePermission, safeApi, text } from '@/lib/api-security'
+import { Types } from 'mongoose'
+import { z } from 'zod'
+import { digest } from '@/lib/auth'
 import { getSession } from '@/lib/auth'
 import { dbConnect } from '@/lib/db'
-import { approvalSchema, posAccounting } from '@/lib/pos-accounting'
+import { approvalSchema, mappingKeys, posAccounting } from '@/lib/pos-accounting'
 import { Account } from '@/models/Account'
 import { textileProduction } from '@/models/TextileProduction'
 
@@ -27,9 +30,25 @@ export const GET = safeApi(async function GET(req: Request) {
   }
   const [latest, accounts] = await Promise.all([
     posAccounting(conn).findOne({}, { sort: { _id: -1 } }),
-    Account.find({ type: 'gl', archivedAt: null }).select('name code').sort({ name: 1 }).lean(),
+    Account.find({ type: 'gl', archivedAt: null }).select('name code meta.posRole').sort({ name: 1 }).lean(),
   ])
   return Response.json({ revision: latest?._id ?? 0, approval: latest?.approval ?? null, accounts }, { headers: { 'Cache-Control': 'no-store' } })
+})
+
+export const POST = safeApi(async function POST(req: Request) {
+  const denied = await requirePermission('configure', req)
+  if (denied) return denied
+  const body = await readBody(req, z.strictObject({ role: z.enum(mappingKeys), name: text.min(1).max(120) }))
+  if (!body) return apiError(400, 'Choose an account role and name')
+  const actor = await getSession()
+  if (!actor) return apiError(401,'Unauthorized')
+  await dbConnect()
+  const _id = new Types.ObjectId(digest('oarlinks-guided-gl-v1:' + body.role).slice(0,24))
+  const result = await Account.findOneAndUpdate({_id}, {$setOnInsert:{
+    type:'gl',name:body.name,meta:{posRole:body.role,createdBy:actor.email},
+  }},{upsert:true,new:true,timestamps:false}).lean()
+  if (result?.type!=='gl'||result.archivedAt||result.meta?.posRole!==body.role) return apiError(409,'Guided account unavailable; review existing accounts')
+  return Response.json({_id:result._id,name:result.name,meta:{posRole:body.role}})
 })
 
 export const PUT = safeApi(async function PUT(req: Request) {
@@ -45,10 +64,18 @@ export const PUT = safeApi(async function PUT(req: Request) {
   if ((latest?._id ?? 0) !== body.revision) return apiError(409, 'Approval changed. Reload and try again.')
   if (body.approval) {
     const ids = Object.values(body.approval.accounts)
-    if (new Set(ids).size !== ids.length || await Account.countDocuments({ _id: { $in: ids }, type: 'gl', archivedAt: null }) !== ids.length) {
+    const accounts = await Account.find({ _id: { $in: ids }, type: 'gl', archivedAt: null }).select('meta.posRole').lean()
+    if (new Set(ids).size !== ids.length || accounts.length !== ids.length) {
       return apiError(400, 'Choose six distinct, active general-ledger accounts')
     }
+    if (accounts.some(account=>account.meta?.posRole && !mappingKeys.some(key=>key===account.meta?.posRole && body.approval?.accounts[key]===String(account._id)))) {
+      return apiError(400,'A guided account is assigned to the wrong accounting role')
+    }
     const orders = body.approval.capitalizedOrderIds
+    const opening = body.approval.capitalizedOpeningIds ?? []
+    if (await textileProduction(conn).openingBatches.countDocuments({ _id: { $in: opening }, verified: { $exists: true } }) !== opening.length) {
+      return apiError(400, 'Opening stock must be count and cost verified before approving its existing capitalization')
+    }
     if (await textileProduction(conn).orders.countDocuments({ _id: { $in: orders }, 'completion.batchId': { $exists: true }, currency: 'PKR', minorPerMeter: { $gt: 0 } }) !== orders.length) {
       return apiError(400, 'Capitalization references must be completed PKR cutting orders with positive cost')
     }
