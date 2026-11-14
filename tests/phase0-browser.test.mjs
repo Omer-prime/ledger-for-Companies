@@ -374,7 +374,7 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
 
     // A disposable posted document exercises the actual POS print buttons.
     const printConnection = await mongoose.createConnection('mongodb://127.0.0.1:37171/?replicaSet=phase0&directConnection=true', {
-      dbName: 'oarlinks_disposable_release_1114_phase0', serverSelectionTimeoutMS: 5000,
+      dbName: (process.env.OARLINKS_TEST_RUN && /^[a-z0-9]{1,16}$/.test(process.env.OARLINKS_TEST_RUN) ? 'oarlinks_disposable_' + process.env.OARLINKS_TEST_RUN + '_phase0' : 'oarlinks_disposable_release_1114_phase0'), serverSelectionTimeoutMS: 5000,
     }).asPromise()
     try {
       const savedBatch=await printConnection.db.collection('textile_thaans').find({'opening.reference':'BROWSER-SINGLE'}).sort({_id:1}).toArray()
@@ -504,7 +504,7 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
     await login('phase0-admin@example.test', 'fixture-only long password')
     assert.notEqual((await authCookie()).value, initial.value)
     connection = await mongoose.createConnection('mongodb://127.0.0.1:37171/?replicaSet=phase0&directConnection=true', {
-      dbName: 'oarlinks_disposable_release_1114_phase0', serverSelectionTimeoutMS: 5000,
+      dbName: (process.env.OARLINKS_TEST_RUN && /^[a-z0-9]{1,16}$/.test(process.env.OARLINKS_TEST_RUN) ? 'oarlinks_disposable_' + process.env.OARLINKS_TEST_RUN + '_phase0' : 'oarlinks_disposable_release_1114_phase0'), serverSelectionTimeoutMS: 5000,
     }).asPromise()
     await connection.db.collection('auth_sessions').updateMany({}, { $set: { expiresAt: new Date(0) } })
     await page.goto(origin + '/admin/inventory')

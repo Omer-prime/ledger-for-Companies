@@ -5,7 +5,7 @@ import mongoose from 'mongoose'
 import { hashPassword } from '../src/lib/password.ts'
 
 const uri='mongodb://127.0.0.1:37171/?replicaSet=phase0&directConnection=true'
-const database='oarlinks_disposable_release_1114_suits'
+const database=(process.env.OARLINKS_TEST_RUN && /^[a-z0-9]{1,16}$/.test(process.env.OARLINKS_TEST_RUN) ? 'oarlinks_disposable_' + process.env.OARLINKS_TEST_RUN + '_suits' : 'oarlinks_disposable_release_1114_suits')
 const origin='http://127.0.0.1:37177'
 
 // Requires a FRESH dedicated fixture DB. Never drops or cleans business databases.

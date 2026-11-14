@@ -6,7 +6,7 @@ import mongoose from 'mongoose'
 
 test('journal posting retries and a single reversal preserve the original entry', async () => {
   process.env.MONGODB_URI = 'mongodb://127.0.0.1:37171/?replicaSet=phase0&directConnection=true'
-  process.env.MONGODB_DATABASE = 'oarlinks_disposable_release_1114_journal'
+  process.env.MONGODB_DATABASE = (process.env.OARLINKS_TEST_RUN && /^[a-z0-9]{1,16}$/.test(process.env.OARLINKS_TEST_RUN) ? 'oarlinks_disposable_' + process.env.OARLINKS_TEST_RUN + '_journal' : 'oarlinks_disposable_release_1114_journal')
   const mongooseUrl = pathToFileURL(createRequire(import.meta.url).resolve('mongoose')).href
   const hook = registerHooks({
     resolve(specifier, context, next) {
