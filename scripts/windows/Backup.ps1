@@ -1,7 +1,13 @@
 #Requires -RunAsAdministrator
-param([Parameter(Mandatory)][string]$Destination,[Parameter(Mandatory)][string]$RecipientCertificate)
+param([Parameter(Mandatory)][string]$Destination,[Parameter(Mandatory)][string]$RecipientCertificate,[Parameter(Mandatory)][string]$MongoDump)
 $ErrorActionPreference='Stop'
 $root=Join-Path $env:ProgramData 'OarLinksBusiness'
+. "$PSScriptRoot/Tools.ps1"
+$dump=Resolve-OarLinksTool $MongoDump 'mongodump.exe'
+$task=Get-ScheduledTask -TaskName OarLinksBusiness -ErrorAction Stop
+if($task.State -ne 'Disabled' -or (Get-NetTCPConnection -LocalPort 37442,37443 -State Listen -ErrorAction SilentlyContinue)){
+ throw 'Stop and disable the OarLinks task and confirm no other database writers before taking a consistent backup'
+}
 $config=Get-Content "$root/config/app-env.json" -Raw|ConvertFrom-Json
 if($config.MONGODB_DATABASE -notmatch '^oarlinks_[a-z0-9_]{1,48}$' -or $config.MONGODB_URI -notmatch '^mongodb://[^:/@]+:[^/@]+@localhost:37441/\?replicaSet=oarlinks&authSource=[a-z0-9_]+$'){throw 'Unexpected MongoDB configuration'}
 if(!(Test-Path -LiteralPath $Destination -PathType Container)){throw 'Configure a protected backup destination first'}
@@ -10,7 +16,7 @@ New-Item -ItemType Directory $work|Out-Null
 try {
  $archive="$work/backup.archive"
  @{uri=$config.MONGODB_URI}|ConvertTo-Json|Set-Content "$work/tool.yml" -Encoding ascii
- & mongodump.exe --config "$work/tool.yml" --db $config.MONGODB_DATABASE "--archive=$archive" --gzip 2>$null
+ & $dump --config "$work/tool.yml" --db $config.MONGODB_DATABASE "--archive=$archive" --gzip 2>$null
  if($LASTEXITCODE -or !(Test-Path $archive)){throw 'MongoDB backup failed'}
  $bytes=[IO.File]::ReadAllBytes($archive)
  $packet=@{ database=$config.MONGODB_DATABASE; sha256=(Get-FileHash $archive).Hash; archive=[Convert]::ToBase64String($bytes) }|ConvertTo-Json -Compress

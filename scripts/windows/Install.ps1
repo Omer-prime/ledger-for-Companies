@@ -9,7 +9,8 @@ param(
 $ErrorActionPreference='Stop'
 if(-not [Environment]::Is64BitProcess -or $env:PROCESSOR_ARCHITECTURE -ne 'AMD64' -or [Environment]::OSVersion.Version.Build -lt 26100){throw 'Use a supported Windows 11 x64 installation (24H2 or later).'}
 if((Get-PSDrive -Name $env:ProgramData.Substring(0,1)).Free -lt 15GB){throw 'At least 15 GB free space is required.'}
-$node=(Get-Command node.exe -CommandType Application).Source
+. "$PSScriptRoot/Tools.ps1"
+$node=Resolve-OarLinksTool (Join-Path $env:ProgramFiles 'nodejs\node.exe') 'node.exe'
 if($node -notlike "$env:ProgramFiles\nodejs\*"){throw 'Install the reviewed machine-wide Node MSI first.'}
 $root=Join-Path $env:ProgramData 'OarLinksBusiness'
 if(Test-Path -LiteralPath $root){throw 'Existing OarLinks directory found. Use the update/recovery procedure; setup will not overwrite it.'}
@@ -38,17 +39,19 @@ function Protect($Path,[string]$Grant){
 Protect $root '*S-1-5-19:(OI)(CI)RX'
 New-Item -ItemType Directory "$root/config","$root/logs","$root/releases","$root/staging","$root/recovery","$root/runtime"|Out-Null
 Protect "$root/recovery" '*S-1-5-32-544:(OI)(CI)F'
-Copy-Item "$PSScriptRoot/host.mjs","$PSScriptRoot/release.mjs","$PSScriptRoot/Backup.ps1","$PSScriptRoot/Update.ps1" "$root/runtime"
+Copy-Item "$PSScriptRoot/host.mjs","$PSScriptRoot/release.mjs","$PSScriptRoot/Tools.ps1","$PSScriptRoot/Backup.ps1","$PSScriptRoot/Update.ps1" "$root/runtime"
 Copy-Item -LiteralPath $PublicKey "$root/config/release-public.pem"
 $settings|ConvertTo-Json|Set-Content "$root/config/app-env.json" -Encoding utf8
 Expand-Archive -LiteralPath "$Bundle/oarlinks.zip" -DestinationPath "$root/releases/$($release.version)"
 Set-Content "$root/active.txt" $release.version -Encoding ascii
 Set-Content "$root/config/channel.txt" $Channel -Encoding ascii
-$cert=New-SelfSignedCertificate -DnsName localhost -CertStoreLocation Cert:\LocalMachine\My -NotAfter (Get-Date).AddYears(1) -FriendlyName 'OarLinks loopback HTTPS'
+$cert=New-SelfSignedCertificate -DnsName localhost -Type SSLServerAuthentication -KeyExportPolicy Exportable -CertStoreLocation Cert:\LocalMachine\My -NotAfter (Get-Date).AddYears(1) -FriendlyName 'OarLinks loopback HTTPS'
 $tlsPassword=[guid]::NewGuid().ToString('N')+[guid]::NewGuid().ToString('N')
 Export-PfxCertificate -Cert $cert -FilePath "$root/config/localhost.pfx" -Password (ConvertTo-SecureString $tlsPassword -AsPlainText -Force)|Out-Null
 Export-Certificate -Cert $cert -FilePath "$root/config/localhost.cer"|Out-Null
-Import-Certificate -FilePath "$root/config/localhost.cer" -CertStoreLocation Cert:\LocalMachine\Root|Out-Null
+$pem="-----BEGIN CERTIFICATE-----`n"+[Convert]::ToBase64String($cert.RawData,[Base64FormattingOptions]::InsertLineBreaks)+"`n-----END CERTIFICATE-----"
+Set-Content "$root/config/localhost.pem" $pem -Encoding ascii
+
 @{tlsPassword=$tlsPassword;thumbprint=$cert.Thumbprint;node=$node}|ConvertTo-Json|Set-Content "$root/config/runtime.json" -Encoding utf8
 $action=New-ScheduledTaskAction -Execute $node -Argument ('"'+$root+'\runtime\host.mjs" "'+$root+'"')
 $principal=New-ScheduledTaskPrincipal -UserId 'NT AUTHORITY\LOCAL SERVICE' -LogonType ServiceAccount -RunLevel Limited
@@ -69,7 +72,7 @@ try {
 Start-ScheduledTask -TaskName OarLinksBusiness
 $started=$false
 for($i=0;$i -lt 30;$i++){
- $status=& curl.exe --silent --max-time 2 -o NUL -w '%{http_code}' https://localhost:37443/api/auth/me
+ $status=& curl.exe --silent --max-time 2 --cacert "$root/config/localhost.pem" -o NUL -w '%{http_code}' https://localhost:37443/api/auth/me
  if($status -eq '401'){$started=$true;break}
  Start-Sleep 1
 }
