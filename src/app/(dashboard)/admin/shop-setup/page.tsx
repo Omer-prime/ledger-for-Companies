@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import InstallationStatus from './InstallationStatus'
 import { redirect } from 'next/navigation'
 import { getSession } from '@/lib/auth'
 import SectionHeader from '@/app/components/SectionHeader'
@@ -28,7 +29,7 @@ export default async function ShopSetup() {
  const states=[profile?'Settings saved':'Not saved',approval?.approval?'Approval recorded · revision '+approval._id:'Awaiting accountant approval',batches?batches+' recorded · '+(approval?.approval?.capitalizedOpeningIds?.length??0)+' approved':'No batches recorded',contacts?contacts+' active accounts':'No contacts recorded','Manual hardware check']
  return <main className="mx-auto max-w-6xl space-y-4">
    <SectionHeader section="Administration" title="Set up your shop">Work through these steps before opening the till.</SectionHeader>
-   <ol className="grid gap-4 md:grid-cols-2">{steps.map(([title,note,href],i)=>
+   <InstallationStatus /><ol className="grid gap-4 md:grid-cols-2">{steps.map(([title,note,href],i)=>
      <li key={href} className="flex flex-col items-start gap-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
        <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-900">{states[i]}</span>
        <h2 className="text-lg font-semibold">{i+1}. {title}</h2>

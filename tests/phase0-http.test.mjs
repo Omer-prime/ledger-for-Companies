@@ -7,7 +7,7 @@ import { hashPassword } from '../src/lib/password.ts'
 
 const origin = 'http://127.0.0.1:37172'
 const uri = 'mongodb://127.0.0.1:37171/?replicaSet=phase0&directConnection=true'
-const dbName = 'oarlinks_disposable_release_1114_phase0'
+const dbName = (process.env.OARLINKS_TEST_RUN && /^[a-z0-9]{1,16}$/.test(process.env.OARLINKS_TEST_RUN) ? 'oarlinks_disposable_' + process.env.OARLINKS_TEST_RUN + '_phase0' : 'oarlinks_disposable_release_1114_phase0')
 
 test('Phase 0 HTTP and replica-set acceptance rehearsal', async () => {
   const connection = await mongoose.createConnection(uri, { dbName, serverSelectionTimeoutMS: 5000 }).asPromise()
