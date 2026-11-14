@@ -337,6 +337,14 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
     const single=page.getByRole('row').filter({hasText:'BROWSER-LOOSE'})
     await single.getByText('800.00',{exact:true}).waitFor()
     await single.getByText('1,500.00',{exact:true}).waitFor()
+    await page.getByRole('button',{name:'Edit BROWSER-FULL',exact:true}).click()
+    await page.getByLabel(/Stock identifier/).fill('BROWSER-FULL-FINAL')
+    await page.getByRole('button',{name:'Update staged item'}).click()
+    await page.getByRole('row').filter({hasText:'BROWSER-PART'}).getByRole('button',{name:'Remove',exact:true}).click()
+    assert.equal(await page.getByRole('cell',{name:'BROWSER-FULL',exact:true}).count(),0)
+    assert.equal(await page.getByRole('cell',{name:'BROWSER-PART',exact:true}).count(),0)
+    await page.getByRole('button',{name:'Preview batch'}).click()
+    await page.getByRole('heading',{name:/Review BROWSER-SINGLE/}).waitFor()
     const loseOpening=async route=>{
       if(route.request().method()!=='POST') return route.continue()
       assert.equal((await route.fetch()).status(),201)
@@ -366,9 +374,13 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
 
     // A disposable posted document exercises the actual POS print buttons.
     const printConnection = await mongoose.createConnection('mongodb://127.0.0.1:37171/?replicaSet=phase0&directConnection=true', {
-      dbName: 'oarlinks_disposable_polish_final_phase0', serverSelectionTimeoutMS: 5000,
+      dbName: 'oarlinks_disposable_release_1114_phase0', serverSelectionTimeoutMS: 5000,
     }).asPromise()
     try {
+      const savedBatch=await printConnection.db.collection('textile_thaans').find({'opening.reference':'BROWSER-SINGLE'}).sort({_id:1}).toArray()
+      assert.deepEqual(savedBatch.map(item=>[item._id,item.suits,item.opening.costPaisa]),[
+        ['BROWSER-FULL-FINAL',4,240000],['BROWSER-LOOSE',1,80000],
+      ])
       const keys = ['cash','bank','receivables','revenue','finishedInventory','cogs']
       const accounts = Object.fromEntries(keys.map(key => [key, new mongoose.Types.ObjectId()]))
       await printConnection.db.collection('accounts').insertMany(keys.map(key => ({ _id: accounts[key], name: 'Browser GL ' + key, type: 'gl' })))
@@ -392,7 +404,7 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
       await page.getByRole('checkbox',{name:/BROWSER-LOOSE/}).waitFor()
       assert.equal(await page.getByRole('checkbox',{name:/SHOP-001/}).count(),0)
       await page.getByLabel('Document number').fill('BROWSER-WALKIN')
-      await page.getByRole('checkbox', { name: /MOBILE-THAAN/ }).check()
+      await page.getByRole('checkbox', { name: /BROWSER-FULL-FINAL/ }).check()
       await page.getByLabel('Total sale amount (PKR)', { exact: true }).fill('3000')
       const loseConfirmation = async route => {
         if (route.request().method() !== 'POST') return route.continue()
@@ -406,13 +418,21 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
       await page.getByRole('button', { name: 'Complete Sale' }).click()
       await page.getByText(/already posted. No duplicate/).waitFor()
       const record = await printConnection.db.collection('checkout_documents').findOne({ _id: 'sale:BROWSER-WALKIN' })
-      assert.equal(record.items[0].totalUm, 5500000)
-      assert.equal(record.items[0].costPaisa, 5500)
-      assert.equal(await printConnection.db.collection('journal_entries').countDocuments({ _id: record.journalId }), 1)
+      assert.equal(record.items[0].totalUm, 6000000)
+      assert.equal(record.items[0].costPaisa, 60000)
+      const journal=await printConnection.db.collection('journal_entries').findOne({_id:record.journalId})
+      assert.deepEqual(journal.lines.map(line=>[line.accountId,line.debitPaisa,line.creditPaisa]),[
+        [String(accounts.cash),300000,0],[String(accounts.revenue),0,300000],
+        [String(accounts.cogs),60000,0],[String(accounts.finishedInventory),0,60000],
+      ])
       const report = await page.evaluate(async () => (await fetch('/api/checkout')).json())
       assert.equal(report.totals.cashReceived, 3000)
       assert.ok(report.dailyDocuments.some(doc => doc.reference === 'BROWSER-WALKIN'))
-      assert.ok(!report.thaans.some(thaan => thaan.id === 'MOBILE-THAAN'))
+      assert.equal(report.thaans.find(thaan=>thaan.id==='BROWSER-FULL-FINAL')?.suits,3)
+      assert.equal(report.thaans.find(thaan=>thaan.id==='BROWSER-FULL-FINAL')?.totalUm,18000000)
+      assert.ok(report.thaans.some(thaan=>thaan.id==='MOBILE-THAAN'))
+      await page.getByRole('checkbox',{name:/BROWSER-FULL-FINAL.*3 suits left/}).waitFor()
+      await page.getByRole('button',{name:'Print Daily Report'}).waitFor()
       assert.equal(await printConnection.db.collection('transactions').countDocuments({ 'meta.source': record._id }), 0)
     } finally {
       await printConnection.close()
@@ -422,7 +442,7 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
       ['a4', 'Print Receipt', 210, 297],
       ['a5', 'Print Receipt', 148, 210],
       ['thermal', 'Print Receipt', 80, 200],
-      ['sticker', 'Sticker MOBILE-THAAN', 50, 30],
+      ['sticker', 'Sticker BROWSER-FULL-FINAL', 50, 30],
     ]
     for (const [paper, button, mmWidth, mmHeight] of printCases) {
       await page.getByLabel('Print paper').selectOption(paper)
@@ -432,7 +452,7 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
       await popup.locator('body[data-print-called=yes]').waitFor()
       if (paper === 'sticker') {
         assert.ok(await popup.locator('svg rect').count() > 20)
-        await popup.getByText('MOBILE-THAAN', { exact: true }).waitFor()
+        await popup.getByText('BROWSER-FULL-FINAL', { exact: true }).waitFor()
       } else {
         await popup.getByText('SALE RECEIPT', { exact: true }).waitFor()
         await popup.getByText(/Operator: phase0-admin/).waitFor()
@@ -446,6 +466,23 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
       assert.equal((raw.match(/\/Type\s*\/Page\b/g) ?? []).length, 1, 'Fixture print fits one page')
       await popup.close()
     }
+
+    await page.getByLabel('Buyer').selectOption('registered')
+    await page.getByLabel('Registered customer').selectOption({label:'Fixture account'})
+    await page.getByLabel('Document number').fill('BROWSER-PART-PAID')
+    await page.getByRole('checkbox',{name:/BROWSER-FULL-FINAL/}).check()
+    await page.getByLabel('Sale type').selectOption('partial')
+    await page.getByLabel('Total sale amount (PKR)',{exact:true}).fill('3000')
+    await page.getByLabel('Payment now (PKR)',{exact:true}).fill('1000')
+    await page.getByRole('button',{name:'Complete Sale'}).click()
+    await page.getByRole('row').filter({hasText:'BROWSER-PART-PAID'}).waitFor()
+    await page.getByRole('checkbox',{name:/BROWSER-FULL-FINAL.*2 suits left/}).waitFor()
+    const dayReport=await page.evaluate(async()=> (await fetch('/api/checkout')).json())
+    assert.equal(dayReport.totals.saleTotal,6000)
+    assert.equal(dayReport.totals.cashReceived,4000)
+    assert.equal(dayReport.totals.newUdhar,2000)
+    const balances=await page.evaluate(async day=>(await fetch('/api/pos-accounting?date='+day)).json(),dayReport.day)
+    assert.equal(balances.journal.reduce((sum,line)=>sum+BigInt(line.debitPaisa)-BigInt(line.creditPaisa),BigInt(0)),BigInt(0))
 
     await page.goto(origin + '/admin/reports')
     await page.locator('input[type=date]').nth(0).fill('2025-01-01')
@@ -467,7 +504,7 @@ test('Chromium local HTTPS sessions, inventory PDF and both report print views',
     await login('phase0-admin@example.test', 'fixture-only long password')
     assert.notEqual((await authCookie()).value, initial.value)
     connection = await mongoose.createConnection('mongodb://127.0.0.1:37171/?replicaSet=phase0&directConnection=true', {
-      dbName: 'oarlinks_disposable_polish_final_phase0', serverSelectionTimeoutMS: 5000,
+      dbName: 'oarlinks_disposable_release_1114_phase0', serverSelectionTimeoutMS: 5000,
     }).asPromise()
     await connection.db.collection('auth_sessions').updateMany({}, { $set: { expiresAt: new Date(0) } })
     await page.goto(origin + '/admin/inventory')
