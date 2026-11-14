@@ -46,15 +46,15 @@ export default function AdminLoginPage() {
             <div className="grid h-9 w-9 place-items-center rounded-xl bg-white/20 ring-1 ring-white/30">
               <span className="text-sm font-bold">LC</span>
             </div>
-            <h1 className="text-lg font-semibold tracking-tight md:text-xl">Ledger Console</h1>
+            <h1 className="text-lg font-semibold tracking-tight md:text-xl">OarLinks Business</h1>
           </div>
           <a
-            href="https://advistors.co.uk"
+            href="/admin/login"
             target="_blank"
             rel="noreferrer"
             className="text-xs underline decoration-white/40 underline-offset-2 hover:decoration-white"
           >
-            Powered by Advistors
+            Powered by OarLinks
           </a>
         </header>
 
@@ -167,7 +167,7 @@ export default function AdminLoginPage() {
 
         {/* Footer */}
         <footer className="mt-6 text-center text-xs text-white/70">
-          © {new Date().getFullYear()} Ledger Console • All rights reserved
+          © {new Date().getFullYear()} OarLinks Business • All rights reserved
         </footer>
       </div>
     </main>

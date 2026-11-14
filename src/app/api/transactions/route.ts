@@ -6,6 +6,8 @@ import { dbConnect } from '@/lib/db'
 import { Transaction, type ITransaction } from '@/models/Transaction'
 import { Account } from '@/models/Account'
 import { LedgerCategory } from '@/models/LedgerCategory'
+import { BusinessSettings } from '@/models/BusinessSettings'
+import { defaultBusinessSettings } from '@/lib/business-settings'
 import mongoose from 'mongoose'
 import { computeRunning, groupTotals, type LedgerRow } from '@/lib/ledger'
 
@@ -27,18 +29,21 @@ export const GET = safeApi(async function GET(req: Request) {
   const period = (searchParams.get('period') as Period) || 'day'
 
   if (!accountId || !mongoose.Types.ObjectId.isValid(accountId)) {
-    return NextResponse.json({ opening: 0, rows: [], totals: { period, items: [] } })
+    return apiError(400, 'Select a valid account')
   }
 
   const acc = await Account.findById(accountId).lean()
   if (!acc) {
-    return NextResponse.json({ opening: 0, rows: [], totals: { period, items: [] } })
+    return apiError(404, 'Account not found')
   }
 
-  const { start: fromDate, end: toDate } = businessDateRange(from, to)
+  const revision = await BusinessSettings.findOne().sort({ _id: -1 }).lean()
+  const settings = revision?.settings ?? defaultBusinessSettings
+  const timeZone = settings.localization.timeZone
+  const { start: fromDate, end: toDate } = businessDateRange(from, to, timeZone)
 
   // Opening = signed openingBalance + all tx before "from"
-  const signedOpening = Number(acc.openingBalance || 0) * (acc.openingIsDebit ? 1 : -1)
+  const signedOpening = Number(acc.openingBalance || 0) * (acc.openingIsDebit === false ? -1 : 1)
 
   const preMatch: Record<string, unknown> = { account: new mongoose.Types.ObjectId(accountId) }
   if (fromDate) preMatch.date = { $lt: fromDate }
@@ -66,10 +71,10 @@ export const GET = safeApi(async function GET(req: Request) {
     .lean<TxLite[]>()
 
   const running: LedgerRow[] = computeRunning(rows, opening)
-  const totals = groupTotals(running, period)
+  const totals = groupTotals(running, period, timeZone)
 
-  const closing = rows.reduce((balance, row) => balance + Number(row.debit ?? 0) - Number(row.credit ?? 0), opening)
-  return NextResponse.json({ opening, closing, rows: running, totals })
+  const closing = running.at(-1)?.runningBalance ?? opening
+  return NextResponse.json({ opening, closing, rows: running, totals, timeZone, businessName: settings.profile.name })
 })
 
 // keep your POST as-is (creating a single transaction)

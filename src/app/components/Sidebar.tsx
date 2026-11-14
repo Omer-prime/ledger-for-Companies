@@ -5,20 +5,27 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
 
 const items = [
-  { href: '/admin', label: 'Dashboard' },
-  { href: '/admin/categories', label: 'Add Ledger Categories' },
-  { href: '/admin/parties', label: 'Add Parties' },
-  { href: '/admin/create-ledger', label: 'Create Ledger' },
-  { href: '/admin/reports', label: 'Reports' },
-  { href: '/admin/members', label: 'Add Member' },
-  { href: '/admin/banks', label: 'Add Banks' },
-  { href: '/admin/products', label: 'Add Products' },
-  { href: '/admin/product-categories', label: 'Add Product Categories' },
-  { href: '/admin/purchases', label: 'Purchases' },
-  { href: '/admin/sales', label: 'Sales' },
-  { href: '/admin/inventory', label: 'Inventory' },
-  { href: '/admin/warehouse', label: 'Warehouse' },
-  { href: '/admin/business-settings', label: 'Business settings', configureOnly: true },
+  { href: '/admin', label: 'Home Dashboard' },
+  { href: '/admin/checkout', label: 'POS - Sales & Receipts' },
+  { href: '/admin/checkout#daily-sales', label: 'Daily Sales Reports' },
+  { href: '/admin/warehouse/production#finished-inventory', label: 'Finished Inventory' },
+  { href: '/admin/warehouse', label: 'Fabric Warehouse' },
+  { href: '/admin/warehouse/production', label: 'Cutting & Thaan Packing' },
+  { href: '/admin/parties', label: 'Customers & Suppliers' },
+  { href: '/ledger', label: 'Customer Statements' },
+  { href: '/admin/reports', label: 'Ledger & Transaction Reports' },
+  { href: '/admin/inventory', label: 'Other Product Inventory' },
+  { href: '/admin/purchases', label: 'Stock Purchases' },
+  { href: '/admin/products', label: 'Products & Prices' },
+  { href: '/admin/product-categories', label: 'Product Categories' },
+  { href: '/admin/banks', label: 'Bank Accounts' },
+  { href: '/admin/shop-setup', label: 'Shop Setup', configureOnly: true },
+  { href: '/admin/financial-setup', label: 'Financial Setup', configureOnly: true },
+  { href: '/admin/opening-stock', label: 'Opening Stock — Existing Suits & Thaans', configureOnly: true },
+  { href: '/admin/categories', label: 'Ledger Categories' },
+  { href: '/admin/create-ledger', label: 'Legacy Ledger (Review Only)' },
+  { href: '/admin/sales', label: 'Legacy Stock Sales' },
+  { href: '/admin/business-settings', label: 'Business Settings', configureOnly: true },
 ]
 
 export default function Sidebar({ canConfigureBusiness }: { canConfigureBusiness: boolean }) {
@@ -73,7 +80,7 @@ export default function Sidebar({ canConfigureBusiness }: { canConfigureBusiness
             <div className="mb-3 rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 p-4 text-white shadow-soft">
               <div className="text-xs uppercase tracking-wide/loose opacity-90">Admin</div>
               <h2 className="mt-1 text-xl font-semibold leading-tight tracking-tight">
-                Ledger Console
+                OarLinks Business
               </h2>
             </div>
 
@@ -130,12 +137,12 @@ export default function Sidebar({ canConfigureBusiness }: { canConfigureBusiness
               <p className="px-1 text-center text-xs text-slate-500">
                 Powered by{' '}
                 <a
-                  href="https://advistors.co.uk"
+                  href="/admin"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="font-medium text-blue-700 underline underline-offset-2 hover:text-blue-800"
                 >
-                  Advistors
+                  OarLinks
                 </a>
               </p>
             </div>

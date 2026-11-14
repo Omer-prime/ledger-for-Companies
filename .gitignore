@@ -22,3 +22,7 @@ Thumbs.db
 config.bat
 
 /.phase0-validation/
+
+/tsconfig.tsbuildinfo
+/APPLY_PRODUCTION_SALES_HISTORY_FIX.ps1
+/RUN_CHECKOUT_TEST.ps1

@@ -11,7 +11,7 @@ const reference = z.string().trim().toUpperCase().regex(/^[A-Z0-9][A-Z0-9._/-]{0
 const length = z.string().trim().regex(/^\d{1,9}(?:\.\d{1,6})?$/)
 const fields = { reference, unit: z.enum(['m', 'yd']) }
 const command = z.discriminatedUnion('kind', [
-  z.strictObject({ ...fields, kind: z.literal('receipt'), supplierId: id, fabric: text.min(1), quantity: length, minorPerMeter: z.number().int().nonnegative().max(1e9) }),
+  z.strictObject({ ...fields, kind: z.literal('receipt'), supplierId: id, fabric: text.min(1), quantity: length, minorPerMeter: z.number().int().nonnegative().max(1e9), currency: z.literal('PKR').optional() }),
   z.strictObject({ ...fields, kind: z.literal('dispatch'), processorId: id, lotId: reference, quantity: length }),
   z.strictObject({ ...fields, kind: z.literal('return'), jobId: reference, dyed: length, damaged: length, rejected: length, lost: length, reason: text.optional() }),
 ])
@@ -46,14 +46,25 @@ export const GET = safeApi(async function GET() {
       } },
       { $project: { um: { $toString: '$um' }, valueNumerator: { $toString: '$valueNumerator' } } },
     ], { session }).toArray()
+    const movements = await events.find({}, { session, projection: { fingerprint: 0 } }).sort({ postedAt: -1, _id: 1 }).limit(100).toArray()
+    const relatedJobs = await jobs.find({ _id: { $in: movements.flatMap(event => event.jobId ? [event.jobId] : []) } }, { session }).toArray()
+    const processors = new Map(relatedJobs.map(job => [job._id, job.processor]))
     return {
       balances,
       canPost: Boolean(actor && actor.role !== 'accountant'),
       lots: await lots.find({}, { session }).sort({ postedAt: -1, _id: 1 }).limit(100).toArray(),
       jobs: await jobs.find({ outstandingUm: { $gt: 0 } }, { session }).sort({ postedAt: -1, _id: 1 }).limit(100).toArray(),
       outstandingJobs: await jobs.countDocuments({ outstandingUm: { $gt: 0 } }, { session }),
-      events: await events.find({}, { session, projection: { fingerprint: 0 } }).sort({ postedAt: -1, _id: 1 }).limit(100).toArray(),
-      accounts: await Account.find({ type: { $in: ['supplier', 'party'] }, archivedAt: null }).select('name').sort({ name: 1 }).session(session).lean(),
+      events: movements.map(event => ({ ...event, processor: event.jobId ? processors.get(event.jobId) : undefined })),
+      accounts: (await Account.find({ type: { $in: ['supplier', 'party'] }, archivedAt: null })
+        .select('name type meta').sort({ name: 1 }).session(session).lean()).map(account => {
+          const tag = account.meta?.partyKind
+          return {
+            _id: String(account._id), name: account.name,
+            kind: tag === 'supplier' || tag === 'customer' || tag === 'processor'
+              ? tag : account.type === 'supplier' ? 'supplier' : 'general',
+          }
+        }),
     }
   }, { readConcern: { level: 'snapshot' } })
   return Response.json(data, { headers: { 'Cache-Control': 'no-store' } })
@@ -104,17 +115,17 @@ export const POST = safeApi(async function POST(req: Request) {
       let lotId: string
       let jobId: string | undefined
       if (body.kind === 'receipt') {
-        const supplier = await Account.findOne({ _id: body.supplierId, type: { $in: ['supplier', 'party'] }, archivedAt: null }).session(session).lean()
+        const supplier = await Account.findOne({ _id: body.supplierId, type: { $in: ['supplier', 'party'] }, 'meta.partyKind': { $nin: ['customer', 'processor'] }, archivedAt: null }).session(session).lean()
         if (!supplier) throw new Rejected(400, 'Select an active supplier')
         lotId = body.reference
         await lots.insertOne({
           _id: lotId, supplierId: String(supplier._id), supplier: supplier.name, fabric: body.fabric,
           receivedUm: total, balances: { greige: total, processor: 0, dyed: 0, damaged: 0, rejected: 0, lost: 0 },
-          minorPerMeter: body.minorPerMeter, currency: settings?.settings.localization.currency ?? defaultBusinessSettings.localization.currency,
+          minorPerMeter: body.minorPerMeter, currency: body.currency ?? settings?.settings.localization.currency ?? defaultBusinessSettings.localization.currency,
           revision, postedAt,
         }, { session })
       } else if (body.kind === 'dispatch') {
-        const processor = await Account.findOne({ _id: body.processorId, type: { $in: ['supplier', 'party'] }, archivedAt: null }).session(session).lean()
+        const processor = await Account.findOne({ _id: body.processorId, type: 'party', 'meta.partyKind': { $nin: ['customer', 'supplier'] }, archivedAt: null }).session(session).lean()
         if (!processor) throw new Rejected(400, 'Select an active dyeing processor')
         lotId = body.lotId
         jobId = body.reference

@@ -10,6 +10,8 @@ type Posting = {
   reason: string
   lines: JournalLine[]
   reverses?: string
+  effectiveDate?: string
+  source?: { system: 'pos'; documentId: string; approvalRevision: number }
 }
 
 // Internal foundation. Legacy Transaction records are never read or rewritten here.
@@ -29,7 +31,9 @@ export async function postJournal(posting: Posting, transaction?: ClientSession)
       lines = reverseJournalLines(original.lines)
     }
     validateJournalLines(lines)
-    const fingerprint = digest(JSON.stringify([posting.actor, posting.reason, posting.reverses, lines]))
+    const fingerprint = digest(JSON.stringify(posting.source
+      ? [posting.actor, posting.reason, posting.reverses, lines, posting.effectiveDate, posting.source]
+      : [posting.actor, posting.reason, posting.reverses, lines]))
     const prior = await entries.findOne({ _id: posting.sourceEventId }, { session })
     if (prior) {
       if (prior.fingerprint !== fingerprint) throw new Error('Journal idempotency conflict')

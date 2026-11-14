@@ -1,0 +1,14 @@
+# Windows installation preparation
+
+Use an approved Node.js 22 LTS patch release and a supported MongoDB replica set. Give the client its own database and narrowly scoped MongoDB credentials. Store MongoDB data on a persistent volume. A standalone MongoDB server cannot run warehouse or POS transactions.
+
+1. Install from an approved release commit under a dedicated non-administrator Windows account. Use `npm ci --ignore-scripts` and `npm run build` from that release directory. Verify the production build and native dependencies on the target architecture.
+2. Create an ACL-protected `.env.production.local` with `MONGODB_URI`, `MONGODB_DATABASE`, `APP_ORIGIN` and `BUSINESS_TIME_ZONE=Asia/Karachi`. Use the exact HTTPS origin with no trailing slash. Keep the MongoDB and application ports private. Use a Windows-managed HTTPS reverse proxy with a trusted certificate and forward the original host and HTTPS scheme.
+3. Provision the initial administrator offline with a fresh password hash using the reviewed Phase 0 reset procedure. Create the unique email index and TTL indexes for sessions and login attempts. The fixture administrator tool only supports empty disposable databases and is unsuitable for customer setup. [Credential setup](phase0-security.md)
+4. Configure Windows Task Scheduler to run `scripts/start-windows.ps1` at startup under the dedicated account, with restart on failure. Run the reverse proxy and MongoDB as services. Confirm HTTPS login and clean restart after reboot before handing over the machine.
+5. Keep encrypted, access-controlled database backups on a separate device or service. Rehearse restore into an isolated database and verify ledger balances, stock, and document counts. Take a verified backup before upgrades. Stage each application release in a separate directory and change the startup task only after rehearsal. Switch back to the previous release only after checking data compatibility, especially stock and posting changes.
+6. Install printer drivers and select A4, A5, 80 mm receipt, or 50 × 30 mm label stock to match the application. Use actual size and disable browser headers and footers. Check alignment and scan several labels before acceptance. Browser printing uses the print dialog. Hardware calibration is pending.
+
+POS posting is off by default. Keep it off until the owner and accountant approve the mappings, historical carrying values and opening reconciliation. See [POS accounting release gates](pos-accounting-release.md). The old fixture environment flag no longer enables posting.
+
+Set the business name and timezone in Business Settings. POS and Customer Statements use those settings. During rehearsal, reconcile opening customer balances against original records and confirm that statement dates, closing balances and print previews are correct. Do not re-enter old worksheet figures as new Udhar. Rehearse backup and restore before using any customer database.

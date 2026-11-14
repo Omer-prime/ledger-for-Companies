@@ -1,3 +1,4 @@
+import { posAccounting } from '@/lib/pos-accounting'
 import { z } from 'zod'
 import { apiError, readBody, requirePermission, safeApi, text } from '@/lib/api-security'
 import { digest, getSession } from '@/lib/auth'
@@ -38,31 +39,62 @@ export const GET = safeApi(async function GET() {
   const data = await connection.transaction(async session => {
     const settings = await BusinessSettings.findOne().sort({ _id: -1 }).session(session).lean()
     const configuration = settings?.settings ?? defaultBusinessSettings
-    const totals = { full: 0, partial: 0, nonstandard: 0, packedSuits: 0, unpacked: 0, pending: 0, quarantined: 0 }
+    const totals = { full: 0, partial: 0, nonstandard: 0, soldThaans: 0, soldSuits: 0, packedSuits: 0, unpacked: 0, pending: 0, quarantined: 0 }
     const byGrade: Record<string, number> = {}
     const byLot = new Map<string, { lotId: string; um: bigint }>()
+    const approval=(await posAccounting(connection).findOne({}, {session,sort:{_id:-1}}))?.approval
+    const openingStock=[]
+    const manufactured={suits:0,um:BigInt(0)}
+    const opening={suits:0,um:BigInt(0)}
+    const pendingOpening={suits:0,um:BigInt(0)}
+    const approvedOpening=new Set(approval?.capitalizedOpeningIds)
     for await (const order of orders.find({}, { session })) {
       totals.pending += order.unclassified
       totals.quarantined += order.completion?.quarantined ?? 0
       for (const stock of Object.values(order.grades)) totals.unpacked += stock.pending
     }
-    for await (const thaan of thaans.find({}, { session })) {
+    for await (const thaan of thaans.find({}, { session }).sort({postedAt:-1,_id:1})) {
+      const remaining=thaan.saleId?0:Math.max(0,thaan.suits-(thaan.soldSuits??0))
+      const remainingUm=remaining===0?BigInt(0):BigInt(thaan.totalUm)*BigInt(remaining)/BigInt(thaan.suits)
+      if(thaan.opening) {
+        const approved=approvedOpening.has(thaan.opening.reference)
+        const bucket=approved?opening:pendingOpening
+        bucket.suits+=remaining
+        bucket.um+=remainingUm
+        if(openingStock.length<100) openingStock.push({_id:thaan._id,fabric:thaan.opening.fabric,kind:thaan.opening.kind,batchId:thaan.opening.reference,
+          available:remaining,approved})
+        continue
+      }
+      manufactured.suits+=remaining
+      manufactured.um+=remainingUm
+      const soldCount = thaan.saleId ? thaan.suits : (thaan.soldSuits ?? 0)
+      totals.soldSuits += soldCount
+      if (thaan.saleId) totals.soldThaans++
       if (thaan.suits === thaan.defaultTargetSuits) totals.full++
       else if (thaan.suits < thaan.defaultTargetSuits) totals.partial++
       else totals.nonstandard++
       totals.packedSuits += thaan.suits
-      for (const item of thaan.contents) byGrade[item.grade] = (byGrade[item.grade] ?? 0) + item.suits
+      if (!thaan.saleId) for (const item of thaan.contents) {
+        const remaining = item.suits - (thaan.contents.length === 1 ? (thaan.soldSuits ?? 0) : 0)
+        byGrade[item.grade] = (byGrade[item.grade] ?? 0) + remaining
+      }
       const lot = byLot.get(thaan.lotId) ?? { lotId: thaan.lotId, um: BigInt(0) }
       lot.um += BigInt(thaan.totalUm)
       byLot.set(thaan.lotId, lot)
     }
     return {
-      canPost: Boolean(actor && actor.role !== 'accountant'), totals, byGrade,
+      canPost: Boolean(actor && actor.role !== 'accountant'), totals, byGrade, openingStock,
+      availability:{
+        manufactured:{suits:manufactured.suits,um:String(manufactured.um)},
+        opening:{suits:opening.suits,um:String(opening.um)},
+        pendingOpening:{suits:pendingOpening.suits,um:String(pendingOpening.um)},
+        combined:{suits:manufactured.suits+opening.suits,um:String(manufactured.um+opening.um)},
+      },
       byLot: [...byLot.values()].map(lot => ({ lotId: lot.lotId, um: String(lot.um) })),
       configuration: { grades: configuration.grades.filter(item => item.enabled), thaan: configuration.thaan },
       lots: await lots.find({ 'balances.dyed': { $gt: 0 } }, { session }).sort({ postedAt: -1, _id: 1 }).limit(100).toArray(),
       orders: await orders.find({}, { session }).sort({ createdAt: -1, _id: 1 }).limit(100).toArray(),
-      thaans: await thaans.find({}, { session }).sort({ postedAt: -1, _id: 1 }).limit(100).toArray(),
+      thaans: await thaans.find({opening:{$exists:false}}, { session }).sort({ postedAt: -1, _id: 1 }).limit(100).toArray(),
       events: await events.find({}, { session, projection: { fingerprint: 0 } }).sort({ postedAt: -1, _id: 1 }).limit(100).toArray(),
     }
   }, { readConcern: { level: 'snapshot' } })

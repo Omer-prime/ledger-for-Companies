@@ -1,12 +1,15 @@
 'use client'
 
 import Link from 'next/link'
+import { formatMicrometers } from '@/lib/warehouse-values'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 
 type Action = 'allocate' | 'complete' | 'grade' | 'regrade' | 'pack'
 type Data = {
+  availability: Record<'manufactured'|'opening'|'combined'|'pendingOpening',{suits:number;um:string}>
+  openingStock: {_id:string;fabric:string;kind:string;batchId:string;available:number;approved:boolean}[]
   canPost: boolean
-  totals: { full: number; partial: number; nonstandard: number; packedSuits: number; unpacked: number; pending: number; quarantined: number }
+  totals: { full: number; partial: number; nonstandard: number; soldThaans: number; soldSuits: number; packedSuits: number; unpacked: number; pending: number; quarantined: number }
   byGrade: Record<string, number>
   byLot: { lotId: string; um: string }[]
   configuration: { grades: { code: string; label: string }[]; thaan: { suitsPerThaan: number; metersPerSuit: number } }
@@ -14,7 +17,7 @@ type Data = {
   orders: { _id: string; lotId: string; allocatedUm: number; suitLengthUm: number; unclassified: number;
     grades: Record<string, { pending: number; packed: number }>
     completion?: { batchId: string; suitLengthUm: number; suits: number; quarantined: number; returnedUm: number; offcutsUm: number; wasteUm: number; consumedUm: number } }[]
-  thaans: { _id: string; lotId: string; orderId: string; batchId: string; suits: number; defaultTargetSuits: number; totalUm: number;
+  thaans: { _id: string; saleId?: string; soldSuits?: number; lotId: string; orderId: string; batchId: string; suits: number; defaultTargetSuits: number; totalUm: number;
     contents: { grade: string; label: string; suits: number }[] }[]
   events: { _id: string; orderId: string; lotId: string; revision: number; actor: string; postedAt: string; document: { reason?: string } }[]
 }
@@ -26,17 +29,13 @@ const labels: Record<Action, string> = {
 const control = 'block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm'
 const card = 'min-w-0 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6'
 
-function length(value: number | string) {
-  const um = BigInt(value)
-  const scale = BigInt(1000000)
-  const fraction = (um % scale).toString().padStart(6, '0').replace(/0+$/, '')
-  return (um / scale).toLocaleString() + (fraction ? '.' + fraction : '') + ' m'
-}
+const length = (value: number | string) => formatMicrometers(value) + ' m'
 
 export default function ProductionPage() {
   const [data, setData] = useState<Data | null>(null)
   const [action, setAction] = useState<Action>('allocate')
   const [orderId, setOrderId] = useState('')
+  const [lotId, setLotId] = useState('')
   const [notice, setNotice] = useState('')
   const [saving, setSaving] = useState(false)
   const inFlight = useRef(false)
@@ -80,6 +79,7 @@ export default function ProductionPage() {
       }
       form.reset()
       setOrderId('')
+      setLotId('')
       setNotice(response.status === 200 ? 'This document was already posted.' : 'Production document posted.')
       await refresh().catch(() => setNotice('Document posted successfully, but production data could not be refreshed.'))
     } catch {
@@ -115,8 +115,13 @@ export default function ProductionPage() {
                 <input className={control} name="reference" required maxLength={64} />
               </label>
               {action === 'allocate' ? <>
-                <label className="text-sm">Dyed lot reference<input className={control} name="lotId" list="dyed-lots" required maxLength={64} /></label>
-                <datalist id="dyed-lots">{data.lots.map(lot => <option key={lot._id} value={lot._id}>{lot.fabric} / {length(lot.balances.dyed)}</option>)}</datalist>
+                <label className="text-sm">Available dyed lot
+                  <select className={control} name="lotId" value={lotId} onChange={event => setLotId(event.target.value)} required>
+                    <option value="">Select a dyed lot</option>
+                    {lotId && !data.lots.some(lot => lot._id === lotId) && <option value={lotId}>{lotId} (previous selection)</option>}
+                    {data.lots.map(lot => <option key={lot._id} value={lot._id}>{lot._id} / {lot.fabric} / {length(lot.balances.dyed)}</option>)}
+                  </select>
+                </label>
                 <label className="text-sm">Allocation (meters)<input className={control} name="length" inputMode="decimal" required /></label>
                 <label className="text-sm">Suit length (meters)<input className={control} name="suitLength" inputMode="decimal" placeholder={String(data.configuration.thaan.metersPerSuit)} /></label>
               </> : <>
@@ -151,9 +156,16 @@ export default function ProductionPage() {
           </form>
         </section>}
         <section className={card}>
-          <h2 className="text-lg font-semibold">Finished inventory</h2>
+          <h2 id="finished-inventory" className="text-lg font-semibold">Finished inventory</h2>
+          <dl className="my-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {([['manufactured','Manufactured · packed and unsold'],['opening','Opening stock · approved and unsold'],['combined','Combined available stock'],['pendingOpening','Opening stock · awaiting approval']] as const).map(([key,label])=>
+              <div key={key} className="rounded-lg border p-3"><dt>{label}</dt><dd className="font-semibold">{data.availability[key].suits} suits · {length(data.availability[key].um)}</dd></div>)}
+          </dl>
+          <p className="text-sm text-slate-600">Combined stock excludes sold suits and unapproved opening stock. Manufactured stock may still need accounting approval before sale.</p>
+          {data.openingStock.length>0 && <div className="my-3 rounded-lg border p-3"><h3 className="font-semibold">Recent opening finished stock</h3><ul>{data.openingStock.map(item=><li key={item._id} className="text-sm">{item._id} · {item.fabric} · {item.kind} · Batch {item.batchId} · {item.available} remaining · {item.approved?'Approved':'Pending approval'}</li>)}</ul></div>}
+          <h3 className="mt-3 font-semibold">Manufacturing history and work in progress</h3>
           <dl className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
-            {[['Total thaans', data.totals.full + data.totals.partial + data.totals.nonstandard], ['Full thaans', data.totals.full], ['Partial thaans', data.totals.partial], ['Oversize thaans', data.totals.nonstandard],
+            {[['Total thaans', data.totals.full + data.totals.partial + data.totals.nonstandard], ['Full thaans', data.totals.full], ['Partial thaans', data.totals.partial], ['Oversize thaans', data.totals.nonstandard], ['Sold thaans', data.totals.soldThaans], ['Sold suits', data.totals.soldSuits],
               ['Packed suits', data.totals.packedSuits], ['Unpacked graded suits', data.totals.unpacked], ['Pending grading', data.totals.pending],
               ['Quarantined suits', data.totals.quarantined]].map(([label, value]) => <div key={label} className="rounded-lg bg-slate-50 p-3"><dt className="text-xs text-slate-600">{label}</dt><dd className="text-xl font-semibold">{value}</dd></div>)}
           </dl>
@@ -162,7 +174,7 @@ export default function ProductionPage() {
             <div><h3 className="text-sm font-semibold">Packed length by lot</h3><ul className="text-sm">{data.byLot.map(lot => <li key={lot.lotId}>{lot.lotId} / {length(lot.um)}</li>)}</ul></div>
           </div>
           <ul className="mt-4 divide-y divide-slate-100">{data.thaans.map(thaan => <li key={thaan._id} className="break-words py-2 text-sm">
-            <strong>{thaan._id}</strong> / {thaan.suits === thaan.defaultTargetSuits ? 'Full' : thaan.suits < thaan.defaultTargetSuits ? 'Partial' : 'Oversize'} / {thaan.suits} suits / {length(thaan.totalUm)}
+            <strong>{thaan._id}</strong> / {thaan.saleId ? 'SOLD - ' + thaan.saleId : (thaan.soldSuits ? 'Opened - partly sold' : 'Available')} / {thaan.suits - (thaan.saleId ? thaan.suits : (thaan.soldSuits ?? 0))} suits remaining / {thaan.suits === thaan.defaultTargetSuits ? 'Full' : thaan.suits < thaan.defaultTargetSuits ? 'Partial' : 'Oversize'} / {thaan.suits} suits / {length(thaan.totalUm)}
             <p className="text-slate-600">Lot {thaan.lotId} / Order {thaan.orderId} / Batch {thaan.batchId} / {thaan.contents.map(item => item.grade + ' (' + item.label + '): ' + item.suits).join(', ')}</p>
           </li>)}</ul>
         </section>

@@ -44,10 +44,12 @@ export function computeRunning(
   return out
 }
 
-export function groupTotals(rows: LedgerRow[], period: 'day' | 'month'): LedgerSummary['totals'] {
+export function groupTotals(rows: LedgerRow[], period: 'day' | 'month', timeZone?: string): LedgerSummary['totals'] {
   const byKey = new Map<string, { debit: number; credit: number; closing: number }>()
+  const formatter = timeZone && new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' })
   for (const r of rows) {
-    const key = period === 'day' ? dayjs(r.date).format('YYYY-MM-DD') : dayjs(r.date).format('YYYY-MM')
+    const day = formatter ? formatter.format(new Date(r.date)) : dayjs(r.date).format('YYYY-MM-DD')
+    const key = period === 'day' ? day : day.slice(0, 7)
     const entry = byKey.get(key) || { debit: 0, credit: 0, closing: 0 }
     entry.debit += Number(r.debit || 0)
     entry.credit += Number(r.credit || 0)
